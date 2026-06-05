@@ -32,8 +32,24 @@ class LLMProvider(models.Model):
         return services + [("openai", "OpenAI")]
 
     def openai_get_client(self):
-        """Get OpenAI client instance"""
-        return OpenAI(api_key=self.api_key, base_url=self.api_base or None)
+        """Get OpenAI client instance.
+
+        KOENIG fork change: pass an explicit request ``timeout`` and
+        ``max_retries`` so a hung embedding/chat request fails fast and is
+        retried (with the SDK's exponential backoff) instead of stalling a
+        long-running bulk job indefinitely. Defaults are tunable per
+        deployment via ``ir.config_parameter`` ``llm_openai.timeout`` (seconds)
+        and ``llm_openai.max_retries``.
+        """
+        icp = self.env["ir.config_parameter"].sudo()
+        timeout = float(icp.get_param("llm_openai.timeout", 60.0))
+        max_retries = int(icp.get_param("llm_openai.max_retries", 3))
+        return OpenAI(
+            api_key=self.api_key,
+            base_url=self.api_base or None,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     def openai_normalize_prepend_messages(self, prepend_messages):
         """Normalize prepend_messages for OpenAI format.

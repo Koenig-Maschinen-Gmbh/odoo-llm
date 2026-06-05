@@ -1,3 +1,11 @@
+18.0.1.4.1 (2026-06-05)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] openai_get_client now sets an explicit request timeout
+  (``llm_openai.timeout``, default 60s) and ``max_retries``
+  (``llm_openai.max_retries``, default 3) so a hung embedding/chat request
+  fails fast and retries instead of stalling bulk jobs.
+
 18.0.1.4.0 (2026-01-17)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
