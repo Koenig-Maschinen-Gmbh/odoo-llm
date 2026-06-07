@@ -240,6 +240,13 @@ class LLMProvider(models.Model):
                     for tc in message.tool_calls
                 ]
 
+            # KOENIG fork change: surface token usage so callers can persist
+            # cost/usage telemetry (koenig_ai_core). The OpenAI-compatible
+            # `usage` block is optional per provider, so guard every access.
+            usage = self._openai_extract_usage(response)
+            if usage:
+                result["usage"] = usage
+
             if "content" in result or "tool_calls" in result:
                 return result
             _logger.warning(
@@ -365,12 +372,65 @@ class LLMProvider(models.Model):
 
         return tool_call_chunks
 
+    @api.model
+    def _openai_extract_usage(self, response):
+        """Return a plain dict of token usage from an OpenAI-compatible response,
+        or {} when the provider omits it. Never raises.
+
+        KOENIG fork helper: normalises the optional `usage` block to
+        prompt/completion/total tokens so telemetry (koenig_ai_core) doesn't
+        depend on the SDK object shape.
+        """
+        usage = getattr(response, "usage", None)
+        if not usage:
+            return {}
+        get = (
+            usage.get
+            if isinstance(usage, dict)
+            else lambda k, d=None: getattr(usage, k, d)
+        )
+        out = {
+            "prompt_tokens": get("prompt_tokens") or 0,
+            "completion_tokens": get("completion_tokens") or 0,
+            "total_tokens": get("total_tokens") or 0,
+        }
+        if not any(out.values()):
+            return {}
+        return out
+
     def openai_embedding(self, texts, model=None):
         """Generate embeddings using OpenAI"""
         model = self.get_model(model, "embedding")
 
         response = self.client.embeddings.create(model=model.name, input=texts)
         return [r.embedding for r in response.data]
+
+    def openai_rerank(self, query, documents, model=None, top_n=None):
+        """Rerank `documents` against `query` via an OpenAI-compatible
+        ``/rerank`` endpoint (Cohere/Jina/IONOS-style).
+
+        KOENIG fork addition: the OpenAI SDK has no rerank method, so we POST
+        through the SDK's underlying HTTP client (inherits base_url, auth,
+        timeout, retries from ``openai_get_client``). Returns a list of
+        ``{"index": int, "relevance_score": float}``. Used by
+        ``koenig.ai.reranker`` only when a rerank-capable model is configured.
+        """
+        model = self.get_model(model, "rerank") if model is None else model
+        body = {"model": model.name, "query": query, "documents": list(documents)}
+        if top_n:
+            body["top_n"] = top_n
+        # `client.post` returns the parsed JSON (cast_to=object → dict/list).
+        data = self.client.post("/rerank", body=body, cast_to=object)
+        results = data.get("results", data) if isinstance(data, dict) else data
+        out = []
+        for r in results or []:
+            idx = r.get("index")
+            score = r.get("relevance_score")
+            if score is None and isinstance(r.get("document"), dict):
+                score = r["document"].get("relevance_score")
+            if idx is not None:
+                out.append({"index": int(idx), "relevance_score": float(score or 0.0)})
+        return out
 
     def openai_models(self, model_id=None):
         """List available OpenAI models"""

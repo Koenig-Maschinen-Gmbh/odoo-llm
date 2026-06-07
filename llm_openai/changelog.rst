@@ -1,3 +1,19 @@
+18.0.1.4.3 (2026-06-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``openai_rerank`` — rerank documents against a query via an
+  OpenAI-compatible ``/rerank`` endpoint (Cohere/Jina/IONOS-style), POSTed
+  through the SDK's HTTP client. Returns ``[{index, relevance_score}]``. Used
+  by ``koenig.ai.reranker`` for the production cross-encoder backend.
+
+18.0.1.4.2 (2026-06-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] Non-streaming chat responses now include a normalised ``usage``
+  block (``prompt_tokens``/``completion_tokens``/``total_tokens``) via the new
+  ``_openai_extract_usage`` helper, so callers can persist token/cost telemetry
+  (koenig_ai_core). Guarded — providers that omit usage simply yield no block.
+
 18.0.1.4.1 (2026-06-05)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
