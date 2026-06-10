@@ -1,3 +1,14 @@
+18.0.1.4.0 (2026-06-10)
+------------------------
+
+* [ADD] Opt-in Anthropic-style Contextual Retrieval in the structured chunker
+  (default OFF). When ``llm_knowledge.contextual_retrieval`` is enabled and
+  ``llm_knowledge.contextual_model_id`` names a chat model, each chunk is prefixed
+  with a short LLM-generated context blurb (situating it in the document) before
+  embedding, replacing the deterministic breadcrumb. Best-effort per chunk (a
+  provider failure leaves the chunk unchanged). One LLM call per chunk at index
+  time — validate cost/quality before enabling in production.
+
 18.0.1.3.0 (2026-06-10)
 ------------------------
 

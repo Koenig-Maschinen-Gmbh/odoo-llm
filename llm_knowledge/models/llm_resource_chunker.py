@@ -10,6 +10,20 @@ _logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 200
 DEFAULT_CHUNK_OVERLAP = 20
 
+# Opt-in Anthropic-style Contextual Retrieval (off by default). When enabled and a
+# context model is configured, the structured chunker prepends a short
+# LLM-generated context to each chunk before embedding (~35-67% fewer retrieval
+# failures, at one LLM call per chunk at index time — validate cost/quality before
+# enabling in production).
+CONTEXTUAL_ENABLED_PARAM = "llm_knowledge.contextual_retrieval"
+CONTEXTUAL_MODEL_PARAM = "llm_knowledge.contextual_model_id"
+_CONTEXTUAL_PROMPT = (
+    "<document>\n{doc}\n</document>\n\nHere is a chunk from the document:\n"
+    "<chunk>\n{chunk}\n</chunk>\n\nGive a short (50-100 token) context that situates "
+    "this chunk within the overall document, to improve search retrieval. Answer "
+    "ONLY with the context, no preamble."
+)
+
 
 class LLMKnowledgeChunker(models.Model):
     _inherit = "llm.resource"
@@ -330,6 +344,53 @@ class LLMKnowledgeChunker(models.Model):
             out.append(" ".join(cur))
         return out
 
+    @api.model
+    def _contextual_model(self):
+        """The configured contextual-retrieval chat model, or None when the
+        feature is disabled / unconfigured. Opt-in (default OFF)."""
+        icp = self.env["ir.config_parameter"].sudo()
+        if icp.get_param(CONTEXTUAL_ENABLED_PARAM, default="0") not in (
+            "1",
+            "True",
+            "true",
+        ):
+            return None
+        param = icp.get_param(CONTEXTUAL_MODEL_PARAM)
+        if not param:
+            return None
+        model = self.env["llm.model"].sudo().browse(int(param)).exists()
+        return model or None
+
+    def _contextualize_chunks(self, model, full_content, chunks_text):
+        """Prepend an LLM-generated context blurb to each chunk (Anthropic
+        Contextual Retrieval). Best-effort per chunk: any failure leaves that
+        chunk unchanged, so indexing never breaks on a provider hiccup."""
+        full = (full_content or "")[:8000]
+        out = []
+        for text in chunks_text:
+            ctx = ""
+            try:
+                result = model.sudo().chat(
+                    self.env["mail.message"].sudo(),
+                    stream=False,
+                    prepend_messages=[
+                        {
+                            "role": "user",
+                            "content": _CONTEXTUAL_PROMPT.format(
+                                doc=full, chunk=text[:1500]
+                            ),
+                        }
+                    ],
+                )
+                ctx = (result.get("content") or "").strip().replace("\n", " ")[:400]
+            except Exception:
+                _logger.exception(
+                    "llm_knowledge: contextual retrieval failed for a chunk; using chunk as-is"
+                )
+                ctx = ""
+            out.append(f"Context: {ctx}\n\n{text}" if ctx else text)
+        return out
+
     def _chunk_structured(self):
         """Token-aware, Markdown-aware recursive chunker (2026 baseline).
 
@@ -363,6 +424,11 @@ class LLMKnowledgeChunker(models.Model):
         # contextual-retrieval signal (situates the chunk in its document) with
         # no per-chunk LLM call. Captured from the heading stack at the chunk's
         # first block (ancestor headings).
+        # Optional Anthropic-style LLM-generated contextual retrieval (opt-in,
+        # default OFF). When configured it replaces the deterministic breadcrumb
+        # with a per-chunk LLM context blurb.
+        llm_ctx_model = self._contextual_model()
+
         chunks_text = []
         heading_stack = []
         cur = []
@@ -371,7 +437,9 @@ class LLMKnowledgeChunker(models.Model):
 
         def emit(crumb, packed):
             body = "\n\n".join(packed)
-            chunks_text.append(f"Context: {crumb}\n\n{body}" if crumb else body)
+            if crumb and not llm_ctx_model:
+                body = f"Context: {crumb}\n\n{body}"
+            chunks_text.append(body)
 
         for block in blocks:
             tok = self._estimate_tokens_struct(block)
@@ -403,6 +471,11 @@ class LLMKnowledgeChunker(models.Model):
 
         if cur:
             emit(cur_crumb, cur)
+
+        if llm_ctx_model:
+            chunks_text = self._contextualize_chunks(
+                llm_ctx_model, self.content, chunks_text
+            )
 
         for seq, text in enumerate(chunks_text, 1):
             self.env["llm.knowledge.chunk"].create(
