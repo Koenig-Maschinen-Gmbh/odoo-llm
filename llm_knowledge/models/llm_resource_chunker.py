@@ -52,7 +52,10 @@ class LLMKnowledgeChunker(models.Model):
     @api.model
     def _get_available_chunkers(self):
         """Get all available chunker methods"""
-        return [("default", "Default Chunker")]
+        return [
+            ("default", "Default Chunker"),
+            ("structured", "Structured (token-aware, Markdown-aware)"),
+        ]
 
     @api.depends("chunk_ids")
     def _compute_chunk_count(self):
@@ -93,6 +96,8 @@ class LLMKnowledgeChunker(models.Model):
                     success = False
                     if resource.chunker == "default":
                         success = resource._chunk_default()
+                    elif resource.chunker == "structured":
+                        success = resource._chunk_structured()
                     else:
                         _logger.warning(
                             "Unknown chunker %s, falling back to default",
@@ -220,6 +225,200 @@ class LLMKnowledgeChunker(models.Model):
         )
 
         return len(chunks) > 0
+
+    # ------------------------------------------------------------------
+    # Structured, token-aware, Markdown-aware chunker (2026 baseline)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _estimate_tokens_struct(text):
+        """Token-count estimate without tiktoken.
+
+        Counts word and punctuation runs (a close, slightly-conservative proxy
+        for BPE tokens) and floors with chars/4. Used only to size chunks, so an
+        approximation is fine; it keeps chunks a touch smaller than the target
+        rather than overshooting an embedding model's window.
+        """
+        if not text:
+            return 0
+        word_punct = len(re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE))
+        return max(word_punct, len(text) // 4)
+
+    @staticmethod
+    def _split_blocks_struct(content):
+        """Split text into structural blocks, keeping Markdown structure intact.
+
+        A block is a heading line, a paragraph, a (whole) list, a fenced code
+        block, or a table — separated by blank lines. Headings are emitted as
+        their own block so the packer can prefer to start a new chunk at a
+        section boundary.
+        """
+        lines = content.replace("\r\n", "\n").split("\n")
+        blocks = []
+        buf = []
+        in_fence = False
+
+        def flush():
+            if buf:
+                text = "\n".join(buf).strip()
+                if text:
+                    blocks.append(text)
+                buf.clear()
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                # Toggle fenced code; keep the whole fence in one block.
+                buf.append(line)
+                if in_fence:
+                    flush()
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                buf.append(line)
+                continue
+            if not stripped:
+                flush()
+                continue
+            if stripped.startswith("#"):
+                # Heading is its own block (section boundary).
+                flush()
+                blocks.append(stripped)
+                continue
+            buf.append(line)
+        flush()
+        return blocks
+
+    @staticmethod
+    def _heading_level_struct(block):
+        """Markdown heading level (number of leading '#'), or 0 if not a heading."""
+        m = re.match(r"^(#{1,6})\s", block)
+        return len(m.group(1)) if m else 0
+
+    @staticmethod
+    def _update_heading_stack_struct(stack, block):
+        """Maintain a (level, text) heading stack as blocks are consumed: a new
+        heading pops same-or-deeper levels then pushes itself."""
+        level = LLMKnowledgeChunker._heading_level_struct(block)
+        if not level:
+            return
+        text = block.lstrip("#").strip()
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, text))
+
+    @staticmethod
+    def _breadcrumb_struct(stack):
+        """Render the heading stack as a 'Title > Section > Subsection' crumb."""
+        return " > ".join(text for _level, text in stack if text)
+
+    @classmethod
+    def _split_oversized_block_struct(cls, block, max_tokens):
+        """Split a single block that exceeds max_tokens into sentence groups."""
+        sentences = re.split(r"(?<=[.!?])\s+", block)
+        out = []
+        cur = []
+        cur_tok = 0
+        for sent in sentences:
+            tok = cls._estimate_tokens_struct(sent)
+            if cur and cur_tok + tok > max_tokens:
+                out.append(" ".join(cur))
+                cur = []
+                cur_tok = 0
+            cur.append(sent)
+            cur_tok += tok
+        if cur:
+            out.append(" ".join(cur))
+        return out
+
+    def _chunk_structured(self):
+        """Token-aware, Markdown-aware recursive chunker (2026 baseline).
+
+        Packs structural blocks (headings/paragraphs/lists/code/tables) greedily
+        up to ``target_chunk_size`` tokens with ``target_chunk_overlap`` tokens of
+        trailing-block overlap, never splitting a block unless it alone exceeds
+        the target. Prefers to start a new chunk at a heading. Replaces the naive
+        200-token, char-based sentence splitter for structure-rich content.
+        """
+        self.ensure_one()
+
+        if not self.content:
+            raise UserError(_("No content to chunk"))
+
+        self.chunk_ids.unlink()
+
+        target = max(self.target_chunk_size or 0, 64)
+        overlap = max(min(self.target_chunk_overlap or 0, target // 2), 0)
+
+        raw_blocks = self._split_blocks_struct(self.content)
+        # Expand any single oversized block into smaller pieces up front.
+        blocks = []
+        for block in raw_blocks:
+            if self._estimate_tokens_struct(block) > target:
+                blocks.extend(self._split_oversized_block_struct(block, target))
+            else:
+                blocks.append(block)
+
+        # Each chunk is prefixed with a "Context: Title > Section" breadcrumb
+        # built from the Markdown heading hierarchy — a cheap, deterministic
+        # contextual-retrieval signal (situates the chunk in its document) with
+        # no per-chunk LLM call. Captured from the heading stack at the chunk's
+        # first block (ancestor headings).
+        chunks_text = []
+        heading_stack = []
+        cur = []
+        cur_tok = 0
+        cur_crumb = ""
+
+        def emit(crumb, packed):
+            body = "\n\n".join(packed)
+            chunks_text.append(f"Context: {crumb}\n\n{body}" if crumb else body)
+
+        for block in blocks:
+            tok = self._estimate_tokens_struct(block)
+            is_heading = bool(self._heading_level_struct(block))
+            # Emit the current chunk when adding this block would overflow, or
+            # when we hit a heading and the chunk already has substance.
+            if cur and (
+                cur_tok + tok > target or (is_heading and cur_tok >= target // 2)
+            ):
+                emit(cur_crumb, cur)
+                # Build overlap from trailing blocks of the just-emitted chunk.
+                ov = []
+                ov_tok = 0
+                for prev in reversed(cur):
+                    ptok = self._estimate_tokens_struct(prev)
+                    if ov_tok + ptok > overlap:
+                        break
+                    ov.insert(0, prev)
+                    ov_tok += ptok
+                cur = list(ov)
+                cur_tok = ov_tok
+                cur_crumb = self._breadcrumb_struct(heading_stack)
+            if not cur:
+                cur_crumb = self._breadcrumb_struct(heading_stack)
+            cur.append(block)
+            cur_tok += tok
+            if is_heading:
+                self._update_heading_stack_struct(heading_stack, block)
+
+        if cur:
+            emit(cur_crumb, cur)
+
+        for seq, text in enumerate(chunks_text, 1):
+            self.env["llm.knowledge.chunk"].create(
+                {
+                    "resource_id": self.id,
+                    "sequence": seq,
+                    "content": text,
+                }
+            )
+
+        self._post_styled_message(
+            f"Created {len(chunks_text)} structured chunks "
+            f"(target: {target} tok, overlap: {overlap} tok)",
+            "success",
+        )
+        return len(chunks_text) > 0
 
     def action_reset_chunk_settings(self):
         """Reset chunk settings to system defaults"""
