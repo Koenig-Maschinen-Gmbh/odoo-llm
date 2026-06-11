@@ -206,6 +206,14 @@ class LLMProvider(models.Model):
             "messages": formatted_messages,
         }
 
+        # Reasoning control (OpenRouter unified `reasoning` parameter): reduce or
+        # disable the model's internal reasoning to cut latency where extended
+        # reasoning doesn't improve quality (RAG / tool-using chat). Empty field =
+        # provider default. Harmless for non-reasoning models / providers.
+        effort = model.reasoning_effort if "reasoning_effort" in model._fields else False
+        if effort:
+            params.setdefault("extra_body", {})["reasoning"] = {"effort": effort}
+
         # Add tools if provided (OpenAI-specific formatting)
         if tools:
             formatted_tools = self.format_tools(tools)

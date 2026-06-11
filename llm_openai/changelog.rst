@@ -1,3 +1,13 @@
+18.0.1.4.5 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``reasoning_effort`` field on ``llm.model``, wired into
+  ``openai_chat`` via OpenRouter's unified ``reasoning`` parameter. Set ``none`` to
+  disable a reasoning model's internal thinking for ~2x lower latency on RAG /
+  tool-using chat (measured: deepseek-v4-pro 4.8s -> 2.5s for a definition answer)
+  where extended reasoning does not reliably improve quality. Empty = provider
+  default; harmless for non-reasoning models.
+
 18.0.1.4.4 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
