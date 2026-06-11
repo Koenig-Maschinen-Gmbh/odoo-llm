@@ -1,3 +1,14 @@
+18.0.1.6.0 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Enforce ``tool_calls_max`` in the agentic loop. ``generate_messages`` now
+  caps the number of tool-execution rounds (the assistant's ``tool_calls_max``,
+  default 5); once reached, the next assistant turn runs with tools disabled so the
+  model must produce a final answer instead of requesting tools indefinitely.
+  The field was previously defined but never enforced, so a model that kept
+  requesting tools looped without bound (hanging thread). ``_generate_assistant_response``
+  and ``_prepare_chat_kwargs`` gained a ``disable_tools`` argument.
+
 18.0.1.5.4 (2025-12-02)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

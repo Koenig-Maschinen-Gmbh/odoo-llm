@@ -256,15 +256,29 @@ class LLMThread(models.Model):
                     # No user message in prepended messages either
                     raise
 
+        # Bound the agentic loop: a model can keep requesting tools indefinitely
+        # (and each round costs an LLM call + tool execution). `tool_calls_max`
+        # on the assistant caps the number of tool-execution rounds; once reached,
+        # the next assistant turn runs WITHOUT tools so the model must produce a
+        # final answer from what it gathered (we still execute pending tool calls
+        # first, so the message history stays valid for the provider).
+        tool_rounds = 0
+        max_tool_rounds = (
+            (self.assistant_id.tool_calls_max or 5) if self.assistant_id else 8
+        )
+
         # Continue generation loop
         while self._should_continue(last_message):
             if last_message.llm_role in ("user", "tool"):
                 if self.model_id.model_use in ("image_generation", "generation"):
                     last_message = yield from self._generate_response(last_message)
                 else:
-                    # Generate assistant response
-                    last_message = yield from self._generate_assistant_response()
+                    # Generate assistant response; disable tools once the cap is hit.
+                    last_message = yield from self._generate_assistant_response(
+                        disable_tools=tool_rounds >= max_tool_rounds,
+                    )
             elif last_message.llm_role == "assistant" and last_message.has_tool_calls():
+                tool_rounds += 1
                 # Execute ALL tool calls from assistant message
                 tool_calls = last_message.get_tool_calls()
                 for tool_call in tool_calls:
@@ -286,11 +300,15 @@ class LLMThread(models.Model):
     def _generate_response(self, last_message):
         raise NotImplementedError
 
-    def _generate_assistant_response(self):
+    def _generate_assistant_response(self, disable_tools=False):
         """Generate assistant response and handle tool calls.
 
         Catches LLM API errors and posts them as error messages in the thread
         so users can see what went wrong without checking server logs.
+
+        `disable_tools=True` makes this turn run without tools (used once the
+        agentic loop hits `tool_calls_max`) so the model produces a final answer
+        instead of requesting yet another tool call.
         """
         # Flush any pending writes to ensure latest messages are visible
         self.env.flush_all()
@@ -301,7 +319,9 @@ class LLMThread(models.Model):
         # Determine if we should use streaming
         use_streaming = getattr(self.model_id, "supports_streaming", True)
 
-        chat_kwargs = self._prepare_chat_kwargs(message_history, use_streaming)
+        chat_kwargs = self._prepare_chat_kwargs(
+            message_history, use_streaming, disable_tools=disable_tools
+        )
 
         try:
             if use_streaming:
@@ -328,11 +348,14 @@ class LLMThread(models.Model):
 
         return assistant_message
 
-    def _prepare_chat_kwargs(self, message_history, use_streaming):
-        """Prepare chat kwargs for provider. Can be overridden by extensions."""
+    def _prepare_chat_kwargs(self, message_history, use_streaming, disable_tools=False):
+        """Prepare chat kwargs for provider. Can be overridden by extensions.
+
+        `disable_tools=True` omits tools for this turn (agentic loop cap reached).
+        """
         return {
             "messages": message_history,
-            "tools": self.tool_ids,
+            "tools": self.env["llm.tool"] if disable_tools else self.tool_ids,
             "stream": use_streaming,
             "prepend_messages": self.get_prepend_messages(),
         }
