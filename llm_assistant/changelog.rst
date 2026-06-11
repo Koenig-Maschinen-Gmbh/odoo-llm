@@ -3,11 +3,15 @@
 
 * [FIX] Enforce ``tool_calls_max`` in the agentic loop. ``generate_messages`` now
   caps the number of tool-execution rounds (the assistant's ``tool_calls_max``,
-  default 5); once reached, the next assistant turn runs with tools disabled so the
-  model must produce a final answer instead of requesting tools indefinitely.
-  The field was previously defined but never enforced, so a model that kept
-  requesting tools looped without bound (hanging thread). ``_generate_assistant_response``
-  and ``_prepare_chat_kwargs`` gained a ``disable_tools`` argument.
+  default 5); the field was previously defined but never enforced, so a model that
+  kept requesting tools looped without bound (a hanging thread). Once the soft cap
+  is reached the next assistant turn is **nudged** to answer now (a transient
+  "you have enough information, don't call more tools" message) while tools stay
+  available — dropping tools or forcing ``tool_choice="none"`` makes some models
+  (e.g. DeepSeek-V4-Pro) emit their native tool-call syntax as plain text instead
+  of answering. A hard cap (soft cap + 3) is the final backstop.
+  ``_generate_assistant_response`` / ``_prepare_chat_kwargs`` gained a
+  ``final_answer`` argument. Requires ``llm_openai`` >= 18.0.1.4.4 (``append_messages``).
 
 18.0.1.5.4 (2025-12-02)
 ~~~~~~~~~~~~~~~~~~~~~~~
