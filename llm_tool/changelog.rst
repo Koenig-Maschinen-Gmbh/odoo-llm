@@ -1,3 +1,11 @@
+18.0.4.1.3 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] The Input Schema ``ace`` field used ``mode: 'text'``, which Odoo 18's
+  ``CodeEditor`` rejects (valid modes: javascript/xml/qweb/scss/python) — the tool
+  form crashed with "Invalid props for component 'CodeEditor': 'mode' is not
+  valid". Switched to ``javascript`` (JSON-compatible highlighting).
+
 18.0.4.1.1 (2025-12-03)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
