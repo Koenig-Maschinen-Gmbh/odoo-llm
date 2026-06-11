@@ -1,3 +1,12 @@
+18.0.1.6.1 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] The assistant, prompt, and prompt-test ``ace`` fields used ace modes that
+  Odoo 18's ``CodeEditor`` rejects (``text`` / ``json`` / ``markdown`` / ``yaml``),
+  crashing those forms with "Invalid props for component 'CodeEditor': 'mode' is
+  not valid". Mapped to valid modes: ``javascript`` for JSON, ``qweb`` for the
+  template / markdown / yaml text fields.
+
 18.0.1.6.0 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
