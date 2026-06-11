@@ -221,6 +221,18 @@ class LLMStorePgVector(models.Model):
         register_vector(self.env.cr._cnx)
         vector_str = Vector._to_db(query_vector)
 
+        # Match the index's type: for >2000-dim embeddings the ANN index is built
+        # on the `halfvec` cast (see _create_vector_index), so the query must cast
+        # both sides to halfvec for the index to be used. The distance is still
+        # correct (half precision); the stored column remains full-precision.
+        dims = len(query_vector) if query_vector is not None else 0
+        if dims > 2000:
+            vec_type = f"halfvec({dims})"
+            emb_expr = f"e.embedding::halfvec({dims})"
+        else:
+            vec_type = "vector"
+            emb_expr = "e.embedding"
+
         # Build the query with proper index hints
         index_name = self._get_index_name(
             "llm_knowledge_chunk_embedding", embedding_model_id
@@ -231,9 +243,9 @@ class LLMStorePgVector(models.Model):
         # Join to llm_knowledge_chunk_embedding instead of directly using chunks
         query = f"""
             WITH query_vector AS (
-                SELECT '{vector_str}'::vector AS vec
+                SELECT '{vector_str}'::{vec_type} AS vec
             )
-            SELECT {index_hint} e.chunk_id, 1 - (e.embedding {query_operator} query_vector.vec) as score
+            SELECT {index_hint} e.chunk_id, 1 - ({emb_expr} {query_operator} query_vector.vec) as score
             FROM llm_knowledge_chunk_embedding e
             JOIN llm_knowledge_chunk c ON e.chunk_id = c.id
             JOIN llm_knowledge_resource_collection_rel rel ON c.resource_id = rel.resource_id
@@ -241,7 +253,7 @@ class LLMStorePgVector(models.Model):
             WHERE rel.collection_id = %s
             AND e.embedding_model_id = %s
             AND e.embedding IS NOT NULL
-            AND (1 - (e.embedding {query_operator} query_vector.vec)) >= %s
+            AND (1 - ({emb_expr} {query_operator} query_vector.vec)) >= %s
             ORDER BY score DESC
             LIMIT %s
             OFFSET %s
@@ -316,56 +328,48 @@ class LLMStorePgVector(models.Model):
                 _logger.info(f"Index {index_name} already exists, skipping creation")
                 return True
 
-        # Determine the dimension specification
-        dim_spec = f"({dimensions})" if dimensions else ""
+        # Choose the indexable type. pgvector's ivfflat/hnsw indexes cap the
+        # `vector` type at 2000 dimensions; for higher-dimensional embeddings
+        # (e.g. text-embedding-3-large = 3072, Qwen3-Embedding = 4096) index the
+        # half-precision `halfvec` cast instead (pgvector >= 0.7.0, up to 4000
+        # dims). The stored column stays full-precision `vector`; only the ANN
+        # index — and the matching query cast in pgvector_search_vectors — use
+        # halfvec.
+        if dimensions and dimensions > 2000:
+            cast_type = f"halfvec({dimensions})"
+            ops = "halfvec_cosine_ops"
+        else:
+            cast_type = f"vector({dimensions})" if dimensions else "vector"
+            ops = "vector_cosine_ops"
 
-        # Determine index method
         index_method = self.pgvector_index_method or "ivfflat"
-
-        try:
-            # Create appropriate index for this embedding model
-            if index_method == "ivfflat":
-                # Create IVFFlat index
-                cr.execute(
-                    f"""
-                    CREATE INDEX {index_name} ON {table_name}
-                    USING ivfflat((embedding::vector{dim_spec}) vector_cosine_ops)
-                    WHERE embedding_model_id = %s AND embedding IS NOT NULL
-                """,
-                    (embedding_model_id,),
+        # Prefer the configured method; fall back hnsw -> ivfflat.
+        methods = ["hnsw", "ivfflat"] if index_method == "hnsw" else [index_method]
+        for method in methods:
+            try:
+                # Isolate each attempt in a savepoint so a failure (unsupported
+                # method, dimension cap, ...) rolls back ONLY this subtransaction
+                # and never poisons the surrounding embedding transaction.
+                with cr.savepoint():
+                    cr.execute(
+                        f"""
+                        CREATE INDEX {index_name} ON {table_name}
+                        USING {method}((embedding::{cast_type}) {ops})
+                        WHERE embedding_model_id = %s AND embedding IS NOT NULL
+                        """,
+                        (embedding_model_id,),
+                    )
+                _logger.info(
+                    f"Created {method} vector index {index_name} ({cast_type}) "
+                    f"for embedding model {embedding_model_id}"
                 )
-            elif index_method == "hnsw":
-                # Try HNSW index if available in pgvector version
-                try:
-                    cr.execute(
-                        f"""
-                        CREATE INDEX {index_name} ON {table_name}
-                        USING hnsw((embedding::vector{dim_spec}) vector_cosine_ops)
-                        WHERE embedding_model_id = %s AND embedding IS NOT NULL
-                    """,
-                        (embedding_model_id,),
-                    )
-                except Exception as e:
-                    # Fallback to IVFFlat if HNSW is not available
-                    _logger.warning(
-                        f"HNSW index not supported, falling back to IVFFlat: {str(e)}"
-                    )
-                    cr.execute(
-                        f"""
-                        CREATE INDEX {index_name} ON {table_name}
-                        USING ivfflat((embedding::vector{dim_spec}) vector_cosine_ops)
-                        WHERE embedding_model_id = %s AND embedding IS NOT NULL
-                    """,
-                        (embedding_model_id,),
-                    )
-
-            _logger.info(
-                f"Created vector index {index_name} for embedding model {embedding_model_id}"
-            )
-            return True
-        except Exception as e:
-            _logger.error(f"Error creating vector index: {str(e)}")
-            return False
+                return True
+            except Exception as e:
+                _logger.warning(f"Could not create {method} index {index_name}: {e}")
+        _logger.error(
+            f"No vector index created for {index_name}; falling back to exact search."
+        )
+        return False
 
     def _drop_vector_index(self, embedding_model_id=None):
         """Drop vector index for the specified embedding model"""
