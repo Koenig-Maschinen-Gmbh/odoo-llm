@@ -207,10 +207,13 @@ export const llmStoreService = {
 
       async loadLLMModels() {
         try {
-          // Check if llm.model exists first - use correct field names
+          // Only chat/multimodal models are valid as a thread's chat model.
+          // Embedding/rerank models must never be selectable here (using one as
+          // the chat model yields a provider 400: "is an embedding model and
+          // cannot be used with the chat/completions endpoint").
           const models = await orm.searchRead(
             "llm.model",
-            [["active", "=", true]],
+            [["active", "=", true], ["model_use", "in", ["chat", "multimodal"]]],
             ["id", "name", "provider_id", "default", "model_use"]
           );
 
@@ -336,10 +339,13 @@ export const llmStoreService = {
         return providers.length > 0 ? providers[0] : null;
       },
 
-      // Get first available model
+      // Get first available model — prefer the one flagged as default.
       getFirstAvailableModel() {
         const models = Array.from(this.llmModels.values());
-        return models.length > 0 ? models[0] : null;
+        if (!models.length) {
+          return null;
+        }
+        return models.find((m) => m.default) || models[0];
       },
 
       // Refresh threads and select specific thread

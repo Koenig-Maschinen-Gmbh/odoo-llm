@@ -1,3 +1,12 @@
+18.0.1.5.0 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] The standalone chat client now only offers chat/multimodal models as a
+  thread's chat model (was: any active model). Selecting an embedding model as the
+  chat model produced a provider 400 ("is an embedding model and cannot be used
+  with the chat/completions endpoint"). ``getFirstAvailableModel`` now prefers the
+  model flagged ``default``.
+
 18.0.1.4.5 (2026-01-17)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
