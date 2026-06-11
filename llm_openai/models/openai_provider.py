@@ -193,6 +193,12 @@ class LLMProvider(models.Model):
         if prepend_messages:
             formatted_messages = prepend_messages + formatted_messages
 
+        # Append transient messages AFTER the history (e.g. a "you have enough
+        # info, answer now" nudge to end an agentic loop). Pre-formatted dicts.
+        append_messages = kwargs.get("append_messages")
+        if append_messages:
+            formatted_messages = formatted_messages + append_messages
+
         # Build params
         params = {
             "model": model.name,

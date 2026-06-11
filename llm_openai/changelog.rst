@@ -1,3 +1,12 @@
+18.0.1.4.4 (2026-06-11)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``openai_chat`` honours an ``append_messages`` kwarg — pre-formatted
+  message dicts placed AFTER the conversation history (mirrors ``prepend_messages``,
+  which goes before). Used by ``llm_assistant`` to append a transient "answer now,
+  don't call more tools" nudge when the agentic loop hits its cap, without
+  persisting it to the thread.
+
 18.0.1.4.3 (2026-06-07)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
