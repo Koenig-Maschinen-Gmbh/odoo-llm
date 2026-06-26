@@ -1,3 +1,32 @@
+18.0.1.5.2 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Stop leaking chatter-only UI into AI conversation threads. Because the
+  AI chat reuses mail's ``Message`` and ``Composer`` components, every standard
+  chatter affordance appeared on AI messages/compose: the message hover toolbar
+  (Add a Reaction, Mark as Todo/star, Reply, Edit, Delete, Copy Link, Translate
+  and the overflow "Expand" menu) and the composer's Emoji picker, GIF picker
+  and "Full composer" button — none of which make sense when talking to an AI.
+  The message action toolbar is now empty for ``llm.thread`` messages, and the
+  emoji/GIF/full-composer buttons are hidden for ``llm.thread`` composers.
+  "Attach files" (multimodal input) and Send/Stop are kept. Regular
+  mail/discuss messages and composers are completely unaffected (the guards are
+  per-component on the ``llm.thread`` model).
+
+18.0.1.5.1 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] The chatter AI-chat extension no longer ``position="replace"``-s the
+  whole ``o-mail-Chatter-content`` subtree. That replace silently dropped every
+  sibling other addons inject into the chatter content — in particular
+  ``cloud_base``'s SharePoint folder tree (``.cb-attachment-box``), which
+  disappeared from every record's chatter once this module was installed
+  alongside cloud_base/koenig_onedrive. The extension is now additive: it flags
+  the content container while AI chat is active and appends the AI chat host;
+  new ``chatter_ai.scss`` hides the normal content while chatting, so only the
+  AI chat shows without destroying any sibling content. AI-chat behaviour is
+  unchanged for the user.
+
 18.0.1.5.0 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -19,6 +19,25 @@ patch(Message, {
  * These methods are used by the component template and rendering logic
  */
 patch(Message.prototype, {
+  setup() {
+    super.setup();
+    // In an LLM (AI) conversation, the standard chatter message-action toolbar
+    // (Add a Reaction, Mark as Todo/star, Reply, Edit, Delete, Copy Link,
+    // Translate, the overflow "Expand" menu, …) is meaningless and only adds
+    // noise. The mail Message component populates `this.messageActions` from
+    // the global `mail.message/actions` registry in its own setup; here we
+    // replace it with an empty, read-only action set for llm.thread messages
+    // so no chatter affordances render. Regular mail/discuss messages are
+    // untouched. The getter reads nothing reactive, so it is render-safe.
+    if (this.props.message?.model === "llm.thread") {
+      this.messageActions = {
+        get actions() {
+          return [];
+        },
+      };
+    }
+  },
+
   /**
    * Check if this message is in an LLM thread
    */

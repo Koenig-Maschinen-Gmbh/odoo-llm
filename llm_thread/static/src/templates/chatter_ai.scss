@@ -1,0 +1,11 @@
+// While AI chat is active, hide the normal chatter content (activities,
+// attachment box, message thread, and any addon-injected siblings such as
+// cloud_base's SharePoint folder tree) so only the AI chat host is visible.
+//
+// This replaces the previous approach of replacing the whole
+// `o-mail-Chatter-content` subtree, which silently dropped sibling
+// injections from other addons. Hiding via CSS keeps every sibling mounted
+// and intact; it is just not shown while the user is in AI chat mode.
+.o-mail-Chatter-content.o-llm-chatting > :not(.o-llm-ChatHost) {
+    display: none !important;
+}

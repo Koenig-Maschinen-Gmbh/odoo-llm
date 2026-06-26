@@ -1,5 +1,30 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <templates xml:space="preserve">
+    <!--
+        Hide chatter-only composer affordances in LLM (AI) threads.
+        Emoji and GIF pickers and the "Full composer" (subject/recipients mail
+        editor) make no sense when prompting an AI. "Attach files" (multimodal
+        input) and the Send/Stop button are kept. `isLLMThread` is provided by
+        composer_patch.js and is per-component, so normal mail/discuss
+        composers are unaffected.
+    -->
+    <t t-inherit="mail.Composer.emojiPicker" t-inherit-mode="extension">
+        <!-- Emoji button (base) -->
+        <xpath expr="//*[@t-ref='emoji-button']" position="attributes">
+            <attribute name="t-if">!isLLMThread</attribute>
+        </xpath>
+        <!-- GIF button (added by mail's gif_picker extension) -->
+        <xpath expr="//*[@t-ref='gif-button']" position="attributes">
+            <attribute name="t-if">hasGifPickerButton and !isLLMThread</attribute>
+        </xpath>
+    </t>
+
+    <t t-inherit="mail.Composer.fullComposer" t-inherit-mode="extension">
+        <xpath expr="//button[hasclass('o-mail-Composer-fullComposer')]" position="attributes">
+            <attribute name="t-if">props.showFullComposer and thread and thread.model !== 'discuss.channel' and !isLLMThread</attribute>
+        </xpath>
+    </t>
+
     <!-- Patch Composer send button template to add stop button for LLM threads -->
     <t
     t-name="mail.Composer.sendButton"
