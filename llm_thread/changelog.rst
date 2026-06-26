@@ -1,3 +1,14 @@
+18.0.1.5.3 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Also strip the chatter message-action set from the **mobile** overflow
+  menu in AI threads. 18.0.1.5.2 emptied the desktop toolbar via the Message
+  component, but ``MessageActionMenuMobile`` builds its own action set with
+  ``useMessageActions()``, so on mobile the chatter actions (reaction, star,
+  edit, …) still appeared for ``llm.thread`` messages. The mobile menu's action
+  set is now empty for ``llm.thread`` messages too. Regular mail/discuss
+  messages are unaffected.
+
 18.0.1.5.2 (2026-06-26)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

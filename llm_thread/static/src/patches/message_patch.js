@@ -3,6 +3,7 @@
 import { LLMToolMessage } from "../components/llm_tool_message/llm_tool_message";
 import { Message } from "@mail/core/common/message";
 import { Message as MessageModel } from "@mail/core/common/message_model";
+import { MessageActionMenuMobile } from "@mail/core/common/message_action_menu_mobile";
 import { patch } from "@web/core/utils/patch";
 
 /**
@@ -123,5 +124,27 @@ patch(MessageModel.prototype, {
 
     // Use original computation for other messages
     return super.computeIsEmpty();
+  },
+});
+
+/**
+ * PATCH 4: Mobile message action menu (data layer)
+ * The mobile overflow menu (MessageActionMenuMobile) builds its OWN action set
+ * via useMessageActions() and is NOT driven by the Message component's
+ * this.messageActions. Without this patch, the desktop toolbar would be empty
+ * for llm.thread messages (PATCH 2) but the mobile "⋮" menu would still list
+ * the chatter actions. Empty it for llm.thread messages too so AI threads are
+ * clean on every form factor. Regular mail/discuss messages are untouched.
+ */
+patch(MessageActionMenuMobile.prototype, {
+  setup() {
+    super.setup();
+    if (this.props.message?.model === "llm.thread") {
+      this.messageActions = {
+        get actions() {
+          return [];
+        },
+      };
+    }
   },
 });
