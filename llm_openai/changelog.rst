@@ -1,3 +1,30 @@
+18.0.1.4.8 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``openai_embedding`` stashes the API's real token ``usage`` via
+  ``_stash_embedding_usage`` so the koenig cost gate can account embeddings
+  exactly (= the count IONOS/OpenAI bills) instead of estimating chars/4.
+
+18.0.1.4.7 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] ``openai_embedding`` replaces empty/whitespace-only inputs with a
+  single space. IONOS rejects an empty string in the ``input`` array with HTTP 400
+  "input cannot be empty" (OpenAI/OpenRouter tolerated it), failing the WHOLE batch
+  and blocking embedding of any document with a blank chunk (empty wiki pages,
+  whitespace-only chatter). The substitution keeps results aligned 1:1 with inputs.
+
+18.0.1.4.6 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] ``openai_embedding`` now forces ``encoding_format="float"``. The
+  OpenAI Python SDK defaults to requesting ``base64``-encoded embeddings; the IONOS
+  AI Model Hub gateway cannot serve that and returns HTTP 500 "cannot unmarshal
+  string into Go struct field Embedding.data.embedding of type []float32" (verified
+  live 2026-06-26 for ``BAAI/bge-m3`` and ``Qwen/Qwen3-VL-Embedding-8B``). Asking
+  for plain floats is correct for OpenAI too. Required for the IONOS embedding
+  cutover.
+
 18.0.1.4.5 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -413,10 +413,42 @@ class LLMProvider(models.Model):
         return out
 
     def openai_embedding(self, texts, model=None):
-        """Generate embeddings using OpenAI"""
+        """Generate embeddings using OpenAI.
+
+        KOENIG fork changes (both verified against IONOS AI Model Hub, 2026-06):
+
+        1. Force ``encoding_format="float"``. The OpenAI Python SDK defaults to
+           requesting ``base64``-encoded embeddings and decoding them client-side,
+           but the IONOS gateway can't serve that and returns HTTP 500 "cannot
+           unmarshal string into []float32". Plain floats are correct for OpenAI too.
+        2. Replace empty/whitespace-only inputs with a single space. IONOS rejects
+           an empty string in the ``input`` array with HTTP 400 "input cannot be
+           empty" (OpenAI/OpenRouter tolerated it), which fails the WHOLE batch and
+           blocks embedding any document whose chunk text is blank (empty wiki
+           pages, whitespace-only chatter). Substituting " " keeps the result count
+           aligned 1:1 with the inputs so the caller's index mapping is preserved.
+        """
         model = self.get_model(model, "embedding")
 
-        response = self.client.embeddings.create(model=model.name, input=texts)
+        if isinstance(texts, str):
+            payload = texts if texts.strip() else " "
+        else:
+            payload = [(t if (t and t.strip()) else " ") for t in texts]
+
+        response = self.client.embeddings.create(
+            model=model.name, input=payload, encoding_format="float"
+        )
+        # KOENIG fork: stash the real token usage so the cost gate can account
+        # embeddings exactly (instead of estimating chars/4). The embeddings
+        # response carries `usage.total_tokens` (= the count IONOS/OpenAI bills).
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self._stash_embedding_usage(
+                {
+                    "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+                    "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                }
+            )
         return [r.embedding for r in response.data]
 
     def openai_rerank(self, query, documents, model=None, top_n=None):
