@@ -1,7 +1,15 @@
+import threading
 from datetime import datetime
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
+
+# KOENIG fork: per-thread stash for the token usage reported by the last
+# embedding() call. The provider implementation (e.g. llm_openai) writes the
+# real `usage` from the API response here; callers (koenig_ai_core cost gate)
+# pop it for exact token accounting instead of estimating. Thread-local so
+# concurrent requests don't cross-contaminate.
+_embedding_usage = threading.local()
 
 
 class LLMProvider(models.Model):
@@ -152,7 +160,25 @@ class LLMProvider(models.Model):
 
     def embedding(self, texts, model=None):
         """Generate embeddings using this provider"""
+        # KOENIG fork: clear any stale usage so a provider that doesn't report it
+        # can't leak a previous call's count to the cost accounting.
+        _embedding_usage.value = None
         return self._dispatch("embedding", texts, model=model)
+
+    @api.model
+    def _stash_embedding_usage(self, usage):
+        """KOENIG fork: provider impls call this with the API's token usage
+        (e.g. ``{'total_tokens': N}``) so callers can account exactly."""
+        _embedding_usage.value = usage or None
+
+    @api.model
+    def _pop_embedding_usage(self):
+        """KOENIG fork: return + clear the token usage recorded by the last
+        ``embedding()`` call on this thread, or None if the provider didn't
+        report it (caller then falls back to estimation)."""
+        usage = getattr(_embedding_usage, "value", None)
+        _embedding_usage.value = None
+        return usage
 
     def generate(self, input_data, model=None, stream=False, **kwargs):
         """Generate content using this provider

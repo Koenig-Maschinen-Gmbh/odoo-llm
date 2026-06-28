@@ -1,3 +1,11 @@
+18.0.1.7.3 (2026-06-26)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] Per-thread embedding token-usage stash on ``llm.provider``
+  (``_stash_embedding_usage`` / ``_pop_embedding_usage``; ``embedding()`` clears
+  it before dispatch). Lets provider impls report the API's real token count so
+  the koenig cost gate accounts embeddings exactly instead of estimating.
+
 18.0.1.7.0 (2026-01-17)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
