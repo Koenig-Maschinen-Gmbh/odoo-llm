@@ -200,7 +200,26 @@ class LLMTool(models.Model):
 
         # Validate parameters against method signature
         model = self.get_pydantic_model_from_signature(method)
-        validated = model(**parameters)
+
+        # Coerce JSON strings to their proper types. LLMs (especially
+        # DeepSeek) sometimes pass list/dict parameters as JSON strings
+        # (e.g. domain='[["country_id.code","=","CH"]]') instead of native
+        # arrays. Pydantic's strict validation rejects strings where lists or
+        # dicts are expected, so we pre-parse them here.
+        type_hints = get_type_hints(method)
+        coerced = dict(parameters)
+        for key, value in coerced.items():
+            if isinstance(value, str):
+                expected = type_hints.get(key)
+                if expected:
+                    origin = getattr(expected, "__origin__", expected)
+                    if origin in (list, dict):
+                        try:
+                            coerced[key] = json.loads(value)
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # let Pydantic produce the error message
+
+        validated = model(**coerced)
 
         # Execute the method
         return method(**validated.model_dump())

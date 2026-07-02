@@ -1,3 +1,13 @@
+18.0.4.1.4 (2026-07-02)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] ``execute()`` now coerces JSON-stringified ``list``/``dict`` parameters
+  to native Python types before Pydantic validation. LLMs (especially
+  DeepSeek) sometimes pass arrays/objects as JSON strings (e.g.
+  ``domain='[["x","=","y"]]'`` instead of ``domain=[["x","=","y"]]``),
+  which Pydantic's strict validation rejected — the tool call failed with a
+  validation error and the LLM fabricated an answer instead.
+
 18.0.4.1.3 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
