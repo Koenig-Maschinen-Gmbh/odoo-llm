@@ -1,3 +1,23 @@
+18.0.1.4.9 (2026-07-03)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``_openai_process_non_streaming_response`` now surfaces the
+  ``reasoning`` field from the API response. Both IONOS and Scaleway return
+  reasoning content in a JSON field called ``reasoning`` (NOT
+  ``reasoning_content`` as the Scaleway docs claim — documentation error
+  verified via raw curl 2026-07-03). The ``openai`` Python library parses it
+  as a dynamic attribute (``getattr(message, "reasoning", None)``). The
+  provider now exposes it as ``result["reasoning_content"]`` for downstream
+  consumers. Previously, reasoning tokens were generated and billed but
+  dropped before reaching Odoo.
+* [KOENIG][ADD] ``_openai_process_streaming_response`` now yields
+  ``{"reasoning": delta.reasoning}`` chunks. Both providers send reasoning
+  as ``delta.reasoning`` (separate from ``delta.content``) in streaming mode.
+* [KOENIG][FIX] Non-streaming response validity check now accepts
+  reasoning-only responses (``"reasoning_content" in result``) — some models
+  (e.g. gpt-oss-120b without explicit ``reasoning_effort``) return
+  ``content=None`` with reasoning in the ``reasoning`` field.
+
 18.0.1.4.8 (2026-06-26)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -210,7 +210,9 @@ class LLMProvider(models.Model):
         # disable the model's internal reasoning to cut latency where extended
         # reasoning doesn't improve quality (RAG / tool-using chat). Empty field =
         # provider default. Harmless for non-reasoning models / providers.
-        effort = model.reasoning_effort if "reasoning_effort" in model._fields else False
+        effort = (
+            model.reasoning_effort if "reasoning_effort" in model._fields else False
+        )
         if effort:
             params.setdefault("extra_body", {})["reasoning"] = {"effort": effort}
 
@@ -254,6 +256,17 @@ class LLMProvider(models.Model):
                     for tc in message.tool_calls
                 ]
 
+            # KOENIG fork change (D-REASONING): surface the reasoning field.
+            # Both IONOS and Scaleway return reasoning content in a field called
+            # `reasoning` (NOT `reasoning_content` as the Scaleway docs claim).
+            # The openai library parses it as a dynamic attribute. We surface it
+            # as `reasoning_content` in the result dict for downstream consumers.
+            reasoning = getattr(message, "reasoning", None) or getattr(
+                message, "reasoning_content", None
+            )
+            if reasoning:
+                result["reasoning_content"] = reasoning
+
             # KOENIG fork change: surface token usage so callers can persist
             # cost/usage telemetry (koenig_ai_core). The OpenAI-compatible
             # `usage` block is optional per provider, so guard every access.
@@ -261,10 +274,14 @@ class LLMProvider(models.Model):
             if usage:
                 result["usage"] = usage
 
-            if "content" in result or "tool_calls" in result:
+            if (
+                "content" in result
+                or "tool_calls" in result
+                or "reasoning_content" in result
+            ):
                 return result
             _logger.warning(
-                "OpenAI non-streaming response had no content or tool calls.",
+                "OpenAI non-streaming response had no content, tool calls, or reasoning.",
             )
             return {}  # Return empty dict if nothing to process
 
@@ -295,6 +312,14 @@ class LLMProvider(models.Model):
 
                 if delta.content:
                     yield {"content": delta.content}
+
+                # KOENIG fork change (D-REASONING): stream reasoning chunks.
+                # Both IONOS and Scaleway send reasoning as delta.reasoning
+                # (separate from delta.content). Surface it so consumers can
+                # process/display it.
+                reasoning_chunk = getattr(delta, "reasoning", None)
+                if reasoning_chunk:
+                    yield {"reasoning": reasoning_chunk}
 
                 if delta.tool_calls:
                     stream_has_tools = True
