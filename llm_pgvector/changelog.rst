@@ -1,3 +1,24 @@
+18.0.1.2.0 (2026-07-07)
+------------------------
+
+* [KOENIG][ADD] Embeddings beyond pgvector's 4000-dim ``halfvec`` index cap
+  (e.g. ``Qwen3-Embedding-8B`` = 4096) are now indexable: the ANN index is a
+  ``subvector(embedding, 1, 2048)::halfvec(2048)`` expression index (valid
+  for MRL/Matryoshka-trained models, which pack the dominant semantics into
+  the leading dimensions), and ``pgvector_search_vectors`` runs a two-stage
+  query — ANN on the subvector with 4x oversampling, then exact re-rank on
+  the full-precision stored vector (``_pgvector_search_subvector_rerank``).
+  ``min_similarity`` applies to the exact score. The stored column remains
+  full-precision, full-dimension: index strategy changes (including this
+  one) never require re-embedding. Previously 4096-dim models fell back to
+  exact scan with an ERROR logged on every insert batch.
+* [KOENIG][IMP] ``_create_vector_index`` checks index existence BEFORE
+  probing dimensions and reads dimensions from an existing embedding row
+  (``vector_dims``) instead of a live embedding API call when possible —
+  the per-insert-batch call no longer hits the provider.
+* [KOENIG][ADD] Tests: subvector index DDL, exact-ranked two-stage search,
+  min-similarity on exact score (``tests/test_subvector_index.py``).
+
 18.0.1.1.0 (2026-06-10)
 ------------------------
 

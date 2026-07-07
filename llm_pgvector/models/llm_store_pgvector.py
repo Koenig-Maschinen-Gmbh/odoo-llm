@@ -8,6 +8,21 @@ from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
+# ANN dimensionality for embeddings beyond pgvector's 4000-dim halfvec index
+# cap (e.g. Qwen3-Embedding-8B = 4096): index only the LEADING dims via a
+# subvector expression index and re-rank candidates on the full-precision
+# vector. Valid for MRL (Matryoshka) trained models, which pack the dominant
+# semantics into the leading dimensions by design (Qwen3 trains 512/1024/
+# 2048/4096 checkpoints). 2048 matches a trained checkpoint and stays well
+# inside the halfvec cap. The STORED vector remains full-precision and
+# full-dimension — changing this constant only requires an index rebuild
+# (force=True), never re-embedding.
+SUBVECTOR_INDEX_DIMS = 2048
+
+# ANN oversampling for the subvector two-stage search: fetch N× the requested
+# rows from the truncated-dims index, then re-rank exactly on the full vector.
+SUBVECTOR_OVERSAMPLE = 4
+
 
 class LLMStorePgVector(models.Model):
     _inherit = "llm.store"
@@ -225,7 +240,20 @@ class LLMStorePgVector(models.Model):
         # on the `halfvec` cast (see _create_vector_index), so the query must cast
         # both sides to halfvec for the index to be used. The distance is still
         # correct (half precision); the stored column remains full-precision.
+        # Beyond the 4000-dim halfvec index cap, use the two-stage
+        # subvector-ANN + exact-rerank search instead.
         dims = len(query_vector) if query_vector is not None else 0
+        if dims > 4000:
+            return self._pgvector_search_subvector_rerank(
+                collection_id,
+                embedding_model_id,
+                vector_str,
+                dims,
+                limit=limit,
+                offset=offset,
+                query_operator=query_operator,
+                min_similarity=min_similarity,
+            )
         if dims > 2000:
             vec_type = f"halfvec({dims})"
             emb_expr = f"e.embedding::halfvec({dims})"
@@ -280,6 +308,76 @@ class LLMStorePgVector(models.Model):
 
         return formatted_results
 
+    def _pgvector_search_subvector_rerank(
+        self,
+        collection_id,
+        embedding_model_id,
+        vector_str,
+        dims,
+        limit=10,
+        offset=0,
+        query_operator="<=>",
+        min_similarity=0.5,
+    ):
+        """Two-stage search for embeddings beyond the 4000-dim halfvec cap.
+
+        Stage 1 (ANN): order by distance on the leading SUBVECTOR_INDEX_DIMS
+        dimensions (halfvec) — matches the expression index built by
+        _create_vector_index — oversampling SUBVECTOR_OVERSAMPLE× the
+        requested window.
+        Stage 2 (exact): re-rank the candidates on the FULL-precision,
+        full-dimension stored vector; min_similarity applies to the exact
+        score, so result quality equals exact scan for any candidate set
+        that contains the true top-k.
+
+        Cosine distance is scale-invariant, so the truncated stage needs no
+        re-normalization.
+        """
+        sub = SUBVECTOR_INDEX_DIMS
+        ann_limit = max((limit + offset) * SUBVECTOR_OVERSAMPLE, 40)
+        query = f"""
+            WITH query_vector AS (
+                SELECT '{vector_str}'::vector({dims}) AS vec,
+                       subvector('{vector_str}'::vector({dims}), 1, {sub})::halfvec({sub}) AS sub_vec
+            ),
+            candidates AS (
+                SELECT e.chunk_id, e.embedding
+                FROM llm_knowledge_chunk_embedding e
+                JOIN llm_knowledge_chunk c ON e.chunk_id = c.id
+                JOIN llm_knowledge_resource_collection_rel rel ON c.resource_id = rel.resource_id
+                CROSS JOIN query_vector
+                WHERE rel.collection_id = %s
+                AND e.embedding_model_id = %s
+                AND e.embedding IS NOT NULL
+                ORDER BY subvector(e.embedding, 1, {sub})::halfvec({sub})
+                         {query_operator} query_vector.sub_vec
+                LIMIT %s
+            )
+            SELECT cand.chunk_id,
+                   1 - (cand.embedding {query_operator} query_vector.vec) AS score
+            FROM candidates cand
+            CROSS JOIN query_vector
+            WHERE (1 - (cand.embedding {query_operator} query_vector.vec)) >= %s
+            ORDER BY score DESC
+            LIMIT %s
+            OFFSET %s
+        """
+        self.env.cr.execute(
+            query,
+            (
+                collection_id,
+                embedding_model_id,
+                ann_limit,
+                min_similarity,
+                limit,
+                offset,
+            ),
+        )
+        return [
+            {"id": chunk_id, "score": score, "metadata": {}}
+            for chunk_id, score in self.env.cr.fetchall()
+        ]
+
     # -------------------------------------------------------------------------
     # Vector Index Management
     # -------------------------------------------------------------------------
@@ -292,14 +390,6 @@ class LLMStorePgVector(models.Model):
         """Create a vector index for the specified embedding model"""
         self.ensure_one()
 
-        # Get the embedding model to determine dimensions if not provided
-        if not dimensions and embedding_model_id:
-            embedding_model = self.env["llm.model"].browse(embedding_model_id)
-            if embedding_model.exists():
-                # Generate a sample embedding to determine dimensions
-                sample_embedding = embedding_model.embedding("")[0]
-                dimensions = len(sample_embedding) if sample_embedding else None
-
         cr = self.env.cr
         table_name = "llm_knowledge_chunk_embedding"
 
@@ -309,7 +399,9 @@ class LLMStorePgVector(models.Model):
         # Generate index name
         index_name = self._get_index_name(table_name, embedding_model_id)
 
-        # Check if index already exists
+        # Check if index already exists — BEFORE any dimension probing, so the
+        # common path (index present, called from every insert batch) costs one
+        # catalog lookup and no embedding API call.
         if force:
             # Drop existing index if force is True
             cr.execute(f"DROP INDEX IF EXISTS {index_name}")
@@ -328,19 +420,53 @@ class LLMStorePgVector(models.Model):
                 _logger.info(f"Index {index_name} already exists, skipping creation")
                 return True
 
-        # Choose the indexable type. pgvector's ivfflat/hnsw indexes cap the
-        # `vector` type at 2000 dimensions; for higher-dimensional embeddings
-        # (e.g. text-embedding-3-large = 3072, Qwen3-Embedding = 4096) index the
-        # half-precision `halfvec` cast instead (pgvector >= 0.7.0, up to 4000
-        # dims). The stored column stays full-precision `vector`; only the ANN
-        # index — and the matching query cast in pgvector_search_vectors — use
-        # halfvec.
-        if dimensions and dimensions > 2000:
-            cast_type = f"halfvec({dimensions})"
+        # Determine dimensions if not provided: cheapest source is an already
+        # stored embedding row; fall back to a live API probe only when the
+        # table has no rows for this model yet.
+        if not dimensions and embedding_model_id:
+            cr.execute(
+                f"""
+                    SELECT vector_dims(embedding) FROM {table_name}
+                    WHERE embedding_model_id = %s AND embedding IS NOT NULL
+                    LIMIT 1
+                """,
+                (embedding_model_id,),
+            )
+            row = cr.fetchone()
+            if row:
+                dimensions = row[0]
+        if not dimensions and embedding_model_id:
+            embedding_model = self.env["llm.model"].browse(embedding_model_id)
+            if embedding_model.exists():
+                # Generate a sample embedding to determine dimensions
+                sample_embedding = embedding_model.embedding("")[0]
+                dimensions = len(sample_embedding) if sample_embedding else None
+
+        # Choose the indexable expression. pgvector's ivfflat/hnsw indexes cap
+        # the `vector` type at 2000 dimensions and `halfvec` at 4000:
+        # - <= 2000 dims: index the vector column directly.
+        # - 2001..4000 dims (e.g. text-embedding-3-large = 3072): index the
+        #   half-precision `halfvec` cast (pgvector >= 0.7.0).
+        # - > 4000 dims (e.g. Qwen3-Embedding-8B = 4096): index only the
+        #   leading SUBVECTOR_INDEX_DIMS dimensions via a subvector expression
+        #   (valid for MRL-trained models); queries re-rank exactly on the
+        #   full vector (_pgvector_search_subvector_rerank).
+        # In ALL cases the stored column stays full-precision, full-dimension
+        # `vector` — index strategy changes never require re-embedding.
+        if dimensions and dimensions > 4000:
+            sub = SUBVECTOR_INDEX_DIMS
+            index_expr = f"(subvector(embedding, 1, {sub})::halfvec({sub}))"
             ops = "halfvec_cosine_ops"
+            descr = f"subvector({sub})/halfvec"
+        elif dimensions and dimensions > 2000:
+            index_expr = f"(embedding::halfvec({dimensions}))"
+            ops = "halfvec_cosine_ops"
+            descr = f"halfvec({dimensions})"
         else:
             cast_type = f"vector({dimensions})" if dimensions else "vector"
+            index_expr = f"(embedding::{cast_type})"
             ops = "vector_cosine_ops"
+            descr = cast_type
 
         index_method = self.pgvector_index_method or "ivfflat"
         # Prefer the configured method; fall back hnsw -> ivfflat.
@@ -354,13 +480,13 @@ class LLMStorePgVector(models.Model):
                     cr.execute(
                         f"""
                         CREATE INDEX {index_name} ON {table_name}
-                        USING {method}((embedding::{cast_type}) {ops})
+                        USING {method}({index_expr} {ops})
                         WHERE embedding_model_id = %s AND embedding IS NOT NULL
                         """,
                         (embedding_model_id,),
                     )
                 _logger.info(
-                    f"Created {method} vector index {index_name} ({cast_type}) "
+                    f"Created {method} vector index {index_name} ({descr}) "
                     f"for embedding model {embedding_model_id}"
                 )
                 return True

@@ -11,7 +11,7 @@
         - Efficient vector search with pgvector
     """,
     "category": "Technical",
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.2.0",
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
     "depends": ["llm", "llm_knowledge", "llm_store"],
