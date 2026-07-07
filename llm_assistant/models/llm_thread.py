@@ -1,9 +1,56 @@
+"""Adapted from https://gist.github.com/jzempel/1552816
+
+MIT License
+
+Copyright (c) 2025, Marc Zempel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import logging
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+from odoo.tools import html2plaintext
 
 _logger = logging.getLogger(__name__)
+
+
+_FOLD_PROMPT_TEMPLATE = """\
+You are merging new conversation content into an existing summary.
+
+EXISTING SUMMARY:
+{existing_anchor}
+
+NEW CONVERSATION SEGMENT TO MERGE:
+{span_text}
+
+Merge the new segment into the existing summary. Update facts that changed, \
+add new decisions and open items, and keep the summary under 1500 words. \
+Use these sections:
+- Intent: what the user is trying to achieve
+- Facts & decisions: established facts and made decisions
+- Open items: unresolved questions and pending tasks
+- User preferences observed: communication style, language, format preferences
+
+Do NOT include task-transient details, secrets, or verbatim quotes. \
+Write in the user's language. Output ONLY the merged summary (no commentary)."""
 
 
 class LLMThread(models.Model):
@@ -22,6 +69,18 @@ class LLMThread(models.Model):
         ondelete="restrict",
         tracking=True,
         help="Prompt to use for workflow",
+    )
+
+    # D8 (P-MEM): rolling thread summarization — anchored iterative fold.
+    # When the summary is set, folded messages (id <= llm_summary_upto_message_id)
+    # are excluded from get_llm_messages() so summary + raw never overlap.
+    llm_summary = fields.Text(
+        help="Persistent rolling summary of earlier conversation (anchored iterative fold).",
+    )
+    llm_summary_upto_message_id = fields.Many2one(
+        "mail.message",
+        ondelete="set null",
+        help="Watermark: messages with id <= this are folded into llm_summary.",
     )
 
     @api.onchange("assistant_id")
@@ -200,10 +259,11 @@ class LLMThread(models.Model):
         """Hook: return a list of formatted messages to prepend to the conversation."""
         self.ensure_one()
 
+        messages = []
         if self.prompt_id:
             try:
                 # Get messages from the prompt with enhanced context
-                return self.prompt_id.get_messages(self.get_context())
+                messages = self.prompt_id.get_messages(self.get_context())
             except Exception as e:
                 _logger.error(
                     "Error getting messages from prompt '%s': %s",
@@ -220,7 +280,22 @@ class LLMThread(models.Model):
                     % (self.prompt_id.name, str(e)),
                 )
 
-        return []
+        # D8 (P-MEM): append rolling summary as a system block when set.
+        # Folded messages are excluded from get_llm_messages() so summary +
+        # raw never overlap.
+        if self.llm_summary:
+            messages = list(messages) + [
+                {
+                    "role": "system",
+                    "content": (
+                        "Summary of the earlier conversation "
+                        "(messages before this point were removed from context):\n"
+                        + self.llm_summary
+                    ),
+                }
+            ]
+
+        return messages
 
     def generate_messages(self, last_message):
         """Generate messages with actual AI intelligence."""
@@ -393,6 +468,8 @@ class LLMThread(models.Model):
         - Limits to the most recent N messages for context window management
         - Uses efficient database queries with proper indexing
         - Excludes error messages (is_error=True) from context
+        - D8 (P-MEM): excludes folded messages (id <= llm_summary_upto_message_id)
+          so the summary block + raw messages never overlap.
 
         Args:
             limit (int): Maximum number of recent messages to retrieve (default: 25)
@@ -410,6 +487,10 @@ class LLMThread(models.Model):
             ("is_error", "=", False),  # Exclude error messages from LLM context
         ]
 
+        # D8: exclude folded messages when a summary watermark is set
+        if self.llm_summary_upto_message_id:
+            domain.append(("id", ">", self.llm_summary_upto_message_id.id))
+
         if limit:
             # Two-step approach for efficiency:
             # 1. Get the N most recent messages (DESC order)
@@ -424,6 +505,92 @@ class LLMThread(models.Model):
         return self.env["mail.message"].search(
             domain,
             order="create_date ASC, write_date ASC, id ASC",
+        )
+
+    def _llm_fold_into_summary(self, model, keep_last=10):
+        """Fold older messages into the persistent summary (anchored iterative).
+
+        D8 (P-MEM): when history exceeds the context window, fold the dropped
+        prefix into a persistent **anchored** summary. Only the newly-dropped
+        span is summarized and MERGED into the existing anchor — never
+        regenerated from scratch. Folded messages leave the context (excluded
+        by ``get_llm_messages`` via the watermark).
+
+        Fail-soft: ANY error keeps the old anchor and watermark unchanged
+        (the anchor must never be lost).
+
+        Args:
+            model: an ``llm.model`` recordset (caller picks the cheap model
+                and sets the env context — the fork stays koenig-free).
+            keep_last (int): number of newest messages to keep raw (default 10).
+        """
+        self.ensure_one()
+        watermark_id = (
+            self.llm_summary_upto_message_id.id
+            if self.llm_summary_upto_message_id
+            else 0
+        )
+
+        # Select foldable span: LLM messages after the watermark, excluding
+        # the newest keep_last, excluding error messages.
+        domain = [
+            ("model", "=", self._name),
+            ("res_id", "=", self.id),
+            ("llm_role", "!=", False),
+            ("is_error", "=", False),
+            ("id", ">", watermark_id),
+        ]
+        all_after = self.env["mail.message"].search(
+            domain,
+            order="create_date ASC, write_date ASC, id ASC",
+        )
+
+        if len(all_after) <= keep_last:
+            return  # Not enough messages to fold
+
+        foldable = all_after[:-keep_last]
+        if not foldable:
+            return
+
+        last_folded_id = foldable[-1].id
+
+        # Build the anchored merge prompt
+        existing_anchor = self.llm_summary or "(no existing summary)"
+        span_lines = []
+        for m in foldable:
+            role = m.llm_role or "unknown"
+            text = html2plaintext(m.body or "")[:500]
+            span_lines.append(f"{role}: {text}")
+        span_text = "\n\n".join(span_lines)
+
+        prompt = _FOLD_PROMPT_TEMPLATE.format(
+            existing_anchor=existing_anchor,
+            span_text=span_text,
+        )
+
+        try:
+            result = model.chat(
+                [],
+                stream=False,
+                prepend_messages=[{"role": "user", "content": prompt}],
+            )
+            content = result.get("content", "") if isinstance(result, dict) else ""
+            if not content:
+                return  # No summary generated, keep old anchor
+        except Exception:
+            _logger.exception(
+                "llm_assistant: _llm_fold_into_summary chat call failed for thread %s",
+                self.id,
+            )
+            return  # Fail-soft: keep old anchor
+
+        # Write the new summary + watermark in one write (fail-soft: if the
+        # write fails, the old anchor is still in the DB from the last fold).
+        self.sudo().write(
+            {
+                "llm_summary": content,
+                "llm_summary_upto_message_id": last_folded_id,
+            }
         )
 
     def get_latest_llm_message(self):

@@ -1,3 +1,16 @@
+18.0.1.6.2 (2026-07-06)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] Rolling thread summarization (D8 / P-MEM): two new fields on ``llm.thread``
+  — ``llm_summary`` (Text) and ``llm_summary_upto_message_id`` (M2o ``mail.message``).
+  ``get_llm_messages()`` excludes folded messages (id <= watermark) so the summary
+  block + raw messages never overlap. ``get_prepend_messages()`` appends the summary
+  as a system block when set. New method ``_llm_fold_into_summary(model, keep_last=10)``
+  performs an anchored iterative merge (only the newly-dropped span is summarized and
+  merged into the existing anchor — never regenerated from scratch). Fail-soft: any
+  error keeps the old anchor and watermark unchanged. The model is a parameter — the
+  fork stays koenig-free; ``koenig_ai_memory`` picks the cheap model and enqueues the job.
+
 18.0.1.6.1 (2026-06-11)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
