@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.5.4",
+    "version": "18.0.1.10.0",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -65,6 +65,12 @@ Contact: support@apexive.com
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.js",
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.xml",
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.scss",
+            # Markdown body styling for assistant answers (P-CHAT M1)
+            "llm_thread/static/src/components/llm_md_body/llm_md_body.scss",
+            # Steps drawer + error prominence (P-CHAT M2)
+            "llm_thread/static/src/components/llm_steps/llm_steps.scss",
+            # Message classification helpers (P-CHAT M2) — used by message_patch.js
+            "llm_thread/static/src/utils/llm_message_classify.js",
             # Patches - Safe extensions of mail components with conditional LLM logic
             "llm_thread/static/src/patches/composer_patch.js",
             "llm_thread/static/src/patches/composer_patch.xml",
@@ -80,6 +86,14 @@ Contact: support@apexive.com
             # Client Actions - Following Odoo 18.0 patterns
             "llm_thread/static/src/client_actions/llm_chat_client_action.js",
             "llm_thread/static/src/client_actions/open_chatter_action.js",
+        ],
+        "web.assets_unit_tests": [
+            # P-CHAT M2 — Hoot unit tests for the message classification helpers.
+            # The util is bundled here too (assets_unit_tests is isolated).
+            "llm_thread/static/src/utils/llm_message_classify.js",
+            "llm_thread/static/tests/llm_message_classify.test.js",
+            # P-CHAT M2 — is_error store-field loop-closer.
+            "llm_thread/static/tests/llm_message_is_error.test.js",
         ],
     },
     "images": [

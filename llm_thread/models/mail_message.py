@@ -43,6 +43,7 @@ class MailMessage(models.Model):
         # Call parent method with modified domain
         return super()._message_fetch(domain, search_term, before, after, around, limit)
 
+    # pylint: disable=missing-return  # void store hook: mutates `store`, no return value
     def _extras_to_store(self, store, format_reply):
         """Add LLM-specific fields to the message store."""
         super()._extras_to_store(store, format_reply)
@@ -61,6 +62,12 @@ class MailMessage(models.Model):
 
             if hasattr(message, "body_json") and message.body_json:
                 data["body_json"] = message.body_json
+
+            # P-CHAT M2: surface is_error so the frontend can keep failed-run
+            # error messages prominent (o-llm-message-error) and OUTSIDE the
+            # steps drawer. Only sent when True (absent ⇒ falsy on the client).
+            if hasattr(message, "is_error") and message.is_error:
+                data["is_error"] = True
 
             if data:  # Only add to store if we have data
                 store.add(message, data)

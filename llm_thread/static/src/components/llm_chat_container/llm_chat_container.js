@@ -1,7 +1,7 @@
 /** @odoo-module **/
 
 import { _t } from "@web/core/l10n/translation";
-import { Component, useRef, useState } from "@odoo/owl";
+import { Component, onMounted, onWillUnmount, useRef, useState } from "@odoo/owl";
 import { Composer } from "@mail/core/common/composer";
 import { LLMThreadHeader } from "../llm_thread_header/llm_thread_header";
 import { Thread } from "@mail/core/common/thread";
@@ -36,9 +36,88 @@ export class LLMChatContainer extends Component {
       ),
       // Mobile: slide-in modal visibility
       isMobileSidebarVisible: false,
+      // P-CHAT M3: 1s tick that drives the sidebar elapsed-mm:ss counter
+      // and the done/failed ✓/! flash. Bumped only while at least one
+      // thread has an active or recently-finished run (see the interval
+      // gate), so idle chats don't re-render every second.
+      elapsedTick: 0,
     });
 
     // No need for local thread tracking - use mail.store.discuss.thread
+
+    // P-CHAT M3 — elapsed timer for the working-indicator. The interval
+    // runs while the container is mounted; the callback only bumps the
+    // reactive tick when there is something time-sensitive to show.
+    this._elapsedTimer = null;
+    onMounted(() => {
+      this._elapsedTimer = setInterval(() => {
+        if (this._hasTimeSensitiveRunState()) {
+          this.state.elapsedTick++;
+        }
+      }, 1000);
+    });
+    onWillUnmount(() => {
+      if (this._elapsedTimer) {
+        clearInterval(this._elapsedTimer);
+        this._elapsedTimer = null;
+      }
+    });
+  }
+
+  /**
+   * P-CHAT M3 — true if any tracked thread is running or freshly finished
+   * (within the flash window). Used to gate the 1s tick so idle chats
+   * don't re-render.
+   */
+  _hasTimeSensitiveRunState() {
+    const states = Object.values(this.llmStore.threadRunState || {});
+    const now = Date.now();
+    return states.some(
+      (s) =>
+        s.state === "running" ||
+        (s.finishedAt && now - s.finishedAt < 3000)
+    );
+  }
+
+  /**
+   * P-CHAT M3 — run state for a thread (or null).
+   */
+  threadRunState(threadId) {
+    return this.llmStore.getThreadRunState(threadId);
+  }
+
+  /**
+   * P-CHAT M3 — elapsed "mm:ss" since the run started, or "" when not
+   * running. Reads `elapsedTick` so the getter is reactive on the tick.
+   */
+  threadElapsedLabel(threadId) {
+    // touch the tick so OWL re-evaluates each second
+    void this.state.elapsedTick;
+    const st = this.threadRunState(threadId);
+    if (!st || st.state !== "running" || !st.startedAt) {
+      return "";
+    }
+    const ms = Date.now() - st.startedAt;
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const mm = String(Math.floor(totalSec / 60)).padStart(2, "0");
+    const ss = String(totalSec % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  }
+
+  /**
+   * P-CHAT M3 — "done" / "failed" / "cancelled" for ~3s after the run
+   * terminates (the ✓/! flash), then null. Reactive on the tick.
+   */
+  threadFinishedFlash(threadId) {
+    void this.state.elapsedTick;
+    const st = this.threadRunState(threadId);
+    if (!st || !st.finishedAt) {
+      return null;
+    }
+    if (Date.now() - st.finishedAt > 3000) {
+      return null;
+    }
+    return st.state; // "done" | "failed" | "cancelled"
   }
 
   /**

@@ -1,0 +1,49 @@
+// P-CHAT M2 — foreground/background message hierarchy.
+//
+// Scope: llm.thread messages (the message_patch.js className getter adds
+// `o-llm-message` + role/hierarchy classes to the mail Message root).
+// Regular mail/discuss messages are untouched.
+.o-llm-message {
+    // --- Steps drawer -----------------------------------------------------
+    // Tool messages and intermediate assistant messages (with tool_calls)
+    // are "steps". When the turn's drawer is collapsed, the step body is
+    // hidden and only the first step's "Work steps (N)" toggle shows; when
+    // expanded, every step renders its content (tool result / tool calls)
+    // under the drawer header.
+    &.o-llm-step.o-llm-step-collapsed {
+        .o-mail-Message-textContent {
+            display: none;
+        }
+    }
+
+    .o-llm-step-summary,
+    .o-llm-step-header {
+        .o-llm-step-toggle {
+            cursor: pointer;
+            font-size: 0.8125rem;
+
+            &:hover {
+                color: #714B67;
+            }
+        }
+    }
+
+    // --- Final answer -----------------------------------------------------
+    // The final answer renders fully expanded. The "Show more" fold from
+    // koenig_mail_email_display is guarded out for llm.thread in that addon
+    // (M2 step 3 / M6 guard); this rule ensures no max-height/clamp lingers.
+    &.o-llm-final-answer {
+        .o-mail-Message-content {
+            max-height: none;
+        }
+    }
+
+    // --- Error prominence -------------------------------------------------
+    // Failed-run error messages (is_error) stay prominent OUTSIDE the drawer.
+    &.o-llm-message-error {
+        .o-mail-Message-content {
+            border-left: 3px solid var(--bs-danger, #dc3545);
+            padding-left: 0.5rem;
+        }
+    }
+}

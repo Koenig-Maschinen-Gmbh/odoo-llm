@@ -11,32 +11,99 @@
       expr="//div[hasclass('o-mail-Message-content')]"
       position="inside"
     >
-            <!-- Tool Message Display -->
-            <t t-if="isToolMessage">
-                <LLMToolMessage message="message" />
+            <!-- P-CHAT M2 — steps drawer.
+                 Tool messages and intermediate assistant messages (with
+                 tool_calls) are "steps": they collapse into one muted
+                 "Work steps (N)" drawer per turn. The first step of a turn
+                 renders the toggle; the rest render only their content when
+                 the drawer is open (and nothing when closed — the body is
+                 hidden via the o-llm-step-collapsed CSS rule). The final
+                 answer (assistant without tool_calls) and error messages
+                 are NOT steps: they render expanded outside the drawer. -->
+            <t t-if="isLLMStep">
+                <!-- Drawer closed: only the first step renders the toggle. -->
+                <div
+          t-if="!isStepDrawerOpen and isFirstStepOfTurn"
+          class="o-llm-step-summary small text-muted mt-1"
+        >
+                    <button
+            type="button"
+            class="btn btn-sm btn-link p-0 text-muted text-decoration-none o-llm-step-toggle"
+            t-on-click="toggleStepDrawer"
+          >
+                        <i class="fa fa-chevron-right me-1" aria-hidden="true" />
+                        <t t-esc="llmStepCount" />
+                        <t t-esc="llmStepsLabel" />
+                    </button>
+                </div>
+
+                <!-- Drawer open: first step renders the header toggle, then
+                     every step renders its own content (tool result / tool
+                     calls) below. -->
+                <t t-if="isStepDrawerOpen">
+                    <div
+            t-if="isFirstStepOfTurn"
+            class="o-llm-step-header small text-muted mt-1 border-top pt-1"
+          >
+                        <button
+              type="button"
+              class="btn btn-sm btn-link p-0 text-muted text-decoration-none o-llm-step-toggle"
+              t-on-click="toggleStepDrawer"
+            >
+                            <i class="fa fa-chevron-down me-1" aria-hidden="true" />
+                            <t t-esc="llmStepCount" />
+                            <t t-esc="llmStepsLabel" />
+                        </button>
+                    </div>
+
+                    <!-- Tool Message Display -->
+                    <t t-if="isToolMessage">
+                        <LLMToolMessage message="message" />
+                    </t>
+
+                    <!-- Assistant Message with Tool Calls -->
+                    <t t-if="hasToolCalls">
+                        <div
+              class="o_llm_tool_calls mt-2 small text-muted border-top pt-2"
+            >
+                            <strong class="me-2">Tools Requested:</strong>
+                            <t
+                t-foreach="message.body_json.tool_calls"
+                t-as="toolCall"
+                t-key="toolCall.id"
+              >
+                                <span
+                  class="badge bg-light text-dark border me-1 mb-1"
+                  t-att-title="'ID: ' + toolCall.id"
+                >
+                                    <i class="fa fa-cog me-1" aria-hidden="true" />
+                                    <t
+                    t-esc="toolCall.function and toolCall.function.name or 'Unknown Tool'"
+                  />
+                                </span>
+                            </t>
+                        </div>
+                    </t>
+                </t>
             </t>
 
-            <!-- Assistant Message with Tool Calls -->
-            <t t-if="hasToolCalls">
-                <div
-          class="o_llm_tool_calls mt-2 small text-muted border-top pt-2"
-        >
-                    <strong class="me-2">Tools Requested:</strong>
-                    <t
-            t-foreach="message.body_json.tool_calls"
-            t-as="toolCall"
-            t-key="toolCall.id"
+            <!-- Copy button on assistant answers (P-CHAT M1).
+                 Shown for non-step assistant messages (the final answer);
+                 steps carry the drawer toggle instead. Copies the markdown
+                 source when body_json carries it, else the rendered plain
+                 text. Tool/user/system messages are unaffected. -->
+            <t
+        t-if="isLLMMessage and llmRole === 'assistant' and !isLLMStep"
+      >
+                <div class="o-llm-copy-row mt-1 text-end">
+                    <button
+            type="button"
+            class="btn btn-sm btn-link p-0 text-muted text-decoration-none o-llm-copy-btn"
+            t-on-click="copyBody"
           >
-                        <span
-              class="badge bg-light text-dark border me-1 mb-1"
-              t-att-title="'ID: ' + toolCall.id"
-            >
-                            <i class="fa fa-cog me-1" aria-hidden="true" />
-                            <t
-                t-esc="toolCall.function and toolCall.function.name or 'Unknown Tool'"
-              />
-                        </span>
-                    </t>
+                        <i class="fa fa-copy me-1" aria-hidden="true" />
+                        <t t-esc="copiedLabel" />
+                    </button>
                 </div>
             </t>
         </xpath>

@@ -31,6 +31,23 @@ export const llmStoreService = {
       // { threadId, model, resId, autoGenerate }
       pendingOpenInChatter: null,
 
+      // P-CHAT M2: steps-drawer expand state per turn. Keyed by turn id
+      // (the user message id that opens the turn). Default = collapsed
+      // (absent key) — tool/intermediate-assistant messages render as a
+      // compact "Arbeitsschritte (N)" row; expanding reveals the step
+      // details (args/result JSON via the tool-message component).
+      stepDrawerOpen: {},
+
+      // P-CHAT M3: live run-feedback state per thread. Keyed by thread id.
+      // { state, label, startedAt, finishedAt, error }
+      //   state: "running" | "done" | "failed" | "cancelled"
+      //   label: human status (expert labels stream in via the bus)
+      //   startedAt / finishedAt: epoch ms (for the sidebar elapsed mm:ss
+      //   and the done/failed ✓/! flash)
+      // Filled by the koenig_ai_orchestrator bus subscriber (the fork store
+      // exposes the API; it does NOT know the bus channel name).
+      threadRunState: {},
+
       // Computed properties - using mailStore as source of truth
       get activeLLMThread() {
         // Check if current active thread in mail.store is an LLM thread
@@ -444,7 +461,11 @@ export const llmStoreService = {
 
       // Helper methods for components
       isStreamingThread(threadId) {
-        return this.streamingThreads.has(threadId);
+        // P-CHAT M3: a thread is "working" if it has an active SSE stream
+        // OR a background orchestration run in the running state.
+        return (
+          this.streamingThreads.has(threadId) || this.isThreadRunning(threadId)
+        );
       },
 
       getStreamingStatus() {
@@ -458,6 +479,69 @@ export const llmStoreService = {
       // Pending open methods - used by client action to bypass unreliable bus
       setPendingOpenInChatter(data) {
         this.pendingOpenInChatter = data;
+      },
+
+      // P-CHAT M2: steps-drawer toggle for a turn (keyed by user-message id).
+      isStepDrawerOpen(turnId) {
+        return Boolean(this.stepDrawerOpen[turnId]);
+      },
+
+      toggleStepDrawer(turnId) {
+        this.stepDrawerOpen[turnId] = !this.stepDrawerOpen[turnId];
+      },
+
+      setStepDrawerOpen(turnId, open) {
+        this.stepDrawerOpen[turnId] = Boolean(open);
+      },
+
+      // P-CHAT M3 — live run-feedback API (called by the koenig bus
+      // subscriber; the fork store stays generic and channel-agnostic).
+      setThreadRunState(threadId, vals) {
+        if (!threadId) {
+          return;
+        }
+        const prev = this.threadRunState[threadId] || {};
+        const next = { ...prev, ...vals };
+        if (
+          vals &&
+          (vals.state === "done" ||
+            vals.state === "failed" ||
+            vals.state === "cancelled") &&
+          !next.finishedAt
+        ) {
+          next.finishedAt = Date.now();
+        }
+        this.threadRunState[threadId] = next;
+      },
+
+      getThreadRunState(threadId) {
+        return this.threadRunState[threadId] || null;
+      },
+
+      isThreadRunning(threadId) {
+        const st = this.threadRunState[threadId];
+        return Boolean(st && st.state === "running");
+      },
+
+      clearThreadRunState(threadId) {
+        delete this.threadRunState[threadId];
+      },
+
+      /**
+       * Re-fetch the user's messaging data so new messages (e.g. the
+       * assistant answer posted by a background orchestration run) appear
+       * without a manual page reload. Uses the standard init_messaging
+       * refresh path (same as refreshThreadsAndSelect).
+       */
+      async reloadThreadMessages(threadId) {
+        if (!threadId) {
+          return;
+        }
+        try {
+          await mailStore.fetchData({ init_messaging: {} });
+        } catch (error) {
+          console.warn("[llm.store] reloadThreadMessages failed:", error);
+        }
       },
 
       consumePendingOpenInChatter(model, resId) {

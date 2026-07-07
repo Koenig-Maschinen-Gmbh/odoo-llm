@@ -73,10 +73,43 @@
                     />
                                     </div>
                                 </div>
-                                <div class="ms-2 flex-shrink-0">
+                                <div
+                class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
+              >
+                                    <!-- P-CHAT M3: live run feedback -->
+                                    <t
+                    t-if="threadElapsedLabel(thread.id)"
+                  >
+                                        <i
+                      class="fa fa-circle-o-notch fa-spin text-primary me-1"
+                      aria-hidden="true"
+                    />
+                                        <t
+                      t-esc="threadElapsedLabel(thread.id)"
+                    />
+                                    </t>
                                     <i
-                    t-if="isStreamingThread(thread.id)"
+                    t-elif="threadFinishedFlash(thread.id) === 'done'"
+                    class="fa fa-check-circle text-success"
+                    title="Done"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="threadFinishedFlash(thread.id) === 'failed'"
+                    class="fa fa-exclamation-circle text-danger"
+                    title="Failed"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
+                    class="fa fa-ban text-muted"
+                    title="Cancelled"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="isStreamingThread(thread.id)"
                     class="fa fa-circle-o-notch fa-spin text-primary"
+                    aria-hidden="true"
                   />
                                 </div>
                             </div>
@@ -173,10 +206,43 @@
                     />
                                     </div>
                                 </div>
-                                <div class="ms-2 flex-shrink-0">
+                                <div
+                class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
+              >
+                                    <!-- P-CHAT M3: live run feedback -->
+                                    <t
+                    t-if="threadElapsedLabel(thread.id)"
+                  >
+                                        <i
+                      class="fa fa-circle-o-notch fa-spin text-primary me-1"
+                      aria-hidden="true"
+                    />
+                                        <t
+                      t-esc="threadElapsedLabel(thread.id)"
+                    />
+                                    </t>
                                     <i
-                    t-if="isStreamingThread(thread.id)"
+                    t-elif="threadFinishedFlash(thread.id) === 'done'"
+                    class="fa fa-check-circle text-success"
+                    title="Done"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="threadFinishedFlash(thread.id) === 'failed'"
+                    class="fa fa-exclamation-circle text-danger"
+                    title="Failed"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
+                    class="fa fa-ban text-muted"
+                    title="Cancelled"
+                    aria-hidden="true"
+                  />
+                                    <i
+                    t-elif="isStreamingThread(thread.id)"
                     class="fa fa-circle-o-notch fa-spin text-primary"
+                    aria-hidden="true"
                   />
                                 </div>
                             </div>

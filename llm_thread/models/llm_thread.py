@@ -232,6 +232,16 @@ class LLMThread(models.Model):
             is_error (bool): If True, marks message as error (excluded from LLM context)
         """
 
+        # P-CHAT M6: AI chat threads don't have meaningful followers — the
+        # user interacts live via the chat UI (SSE / bus reload), never via
+        # inbox/email. Suppress the follower-notification pipeline:
+        # ``mail_create_nosubscribe`` prevents auto-subscribing the poster,
+        # and ``_notify_thread`` (overridden below) is a no-op so no
+        # ``mail.notification`` / ``mail.mail`` / bus push is created.
+        # Generic — any AI chat product wants this, not just König.
+        if not self.env.context.get("mail_create_nosubscribe"):
+            self = self.with_context(mail_create_nosubscribe=True)
+
         # Convert LLM role to subtype_xmlid if provided
         if llm_role:
             _, role_to_id = self.env["mail.message"].get_llm_roles()
@@ -282,6 +292,22 @@ class LLMThread(models.Model):
 
         return None
 
+    def _notify_thread(self, message, msg_vals=False, **kwargs):
+        """P-CHAT M6: no-op — AI chat threads never notify followers.
+
+        FULL OVERRIDE (no ``super``): an AI chat thread's "followers" are
+        not meaningful — the asking user reads answers live through the
+        chat UI (SSE stream + the P-CHAT M3 bus reload), not through the
+        inbox/email notification pipeline. Calling ``super`` would create
+        ``mail.notification`` / ``mail.mail`` / bus push records and email
+        followers, which is exactly the spam an AI chat must avoid.
+        Combined with ``mail_create_nosubscribe`` (set in ``message_post``)
+        this guarantees zero follower notifications for any AI message
+        (user / assistant / tool / error). Other ``mail.thread`` models
+        are unaffected — this override is on ``llm.thread`` only.
+        """
+        return None
+
     def _process_llm_body(self, body):
         """Process body content for LLM messages (markdown to HTML conversion).
 
@@ -295,6 +321,17 @@ class LLMThread(models.Model):
         - ``tables`` extra: pipe tables (the models' standard table format)
           previously rendered as raw ``| a | b |`` text. ``html-classes``
           maps them onto Bootstrap table styling.
+        - P-CHAT M1 (2026-07-07): extras aligned with the wiki content
+          converter (``koenig_wiki_outline_importer`` ``ContentConverter``)
+          so chat answers render at the same markdown fidelity as wiki pages.
+          Added ``task_list`` (``- [ ]`` / ``- [x]`` checkboxes),
+          ``code-friendly`` (disables ``__bold__`` / ``_italic_`` so code
+          identifiers with underscores survive), and ``break-on-newline``
+          (single newlines render as ``<br>`` — the ChatGPT/Claude chat
+          convention). ``header-ids`` is deliberately NOT enabled: the
+          ``id`` anchors it injects on every heading are noise in a chat
+          bubble (no in-page navigation target) and would clutter the
+          stored HTML. ``html-classes`` table mapping kept.
         """
         if not body or isinstance(body, Markup):
             return body
@@ -304,6 +341,9 @@ class LLMThread(models.Model):
                 "tables": None,
                 "fenced-code-blocks": None,
                 "strike": None,
+                "task_list": None,
+                "code-friendly": None,
+                "break-on-newline": None,
                 "html-classes": {"table": "table table-sm"},
             },
         )
@@ -662,6 +702,7 @@ class LLMThread(models.Model):
     # STORE INTEGRATION - For mail.store compatibility
     # ============================================================================
 
+    # pylint: disable=missing-return  # void store hook: mutates `store`, no return value
     def _thread_to_store(self, store, **kwargs):
         """Extend base _thread_to_store to include LLM-specific fields."""
         super()._thread_to_store(store, **kwargs)

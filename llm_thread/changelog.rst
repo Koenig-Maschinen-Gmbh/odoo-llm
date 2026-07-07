@@ -1,3 +1,105 @@
+18.0.1.10.0 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-CHAT M6 (step 1, pulled forward): AI chat threads never
+  notify followers. ``message_post`` now injects ``mail_create_nosubscribe``
+  (prevents auto-subscribing the poster) and ``_notify_thread`` is a no-op
+  on ``llm.thread`` (no ``mail.notification`` / ``mail.mail`` / bus push).
+  The asking user reads answers live via the chat UI (SSE + the M3 bus
+  reload), never via inbox/email — followers are not meaningful for an AI
+  chat. Generic (any AI chat product wants this). Other ``mail.thread``
+  models are unaffected (the override is ``llm.thread``-only). Tests:
+  assistant + user messages create zero notifications/mails; a
+  ``res.partner`` message still notifies its followers (suppression is
+  llm.thread-specific).
+
+18.0.1.9.0 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] Self-review (round 2): ``is_error`` is now declared as a
+  Mail Store field (``Record.attr()`` in the MessageModel patch setup) so
+  the value serialized by ``_extras_to_store`` is actually populated on
+  the frontend record. Without the declaration the store field-detection
+  scan did not see it — closing the loop on the M2 ``is_error`` fix (new
+  Hoot suite ``llm_message_is_error.test.js`` proves the store populates
+  it + the field is registered).
+* [KOENIG][ADD] P-CHAT M4 support: ``[[model:id label]]`` record markers
+  survive ``_process_llm_body`` (markdown2) — verified incl. inside pipe
+  tables (space separator avoids the ``|`` conflict). New
+  ``test_record_marker_survives_markdown`` /
+  ``test_record_marker_survives_in_table`` tests.
+
+18.0.1.8.0 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-CHAT M3: live run-feedback API on the llm store —
+  ``threadRunState`` map + ``setThreadRunState`` / ``getThreadRunState`` /
+  ``isThreadRunning`` / ``clearThreadRunState`` / ``reloadThreadMessages``.
+  A generic, channel-agnostic API that koenig bus subscribers call to drive
+  the sidebar working-indicator and answer arrival without a manual reload.
+  ``isStreamingThread`` now also treats a background run (running state) as
+  streaming, so the composer disables send while a run is active.
+* [KOENIG][ADD] Sidebar working-indicator: spinner + elapsed ``mm:ss``
+  while a thread runs, ✓ / ⚠ / ⊘ flash on done / failed / cancelled. A
+  gated 1s tick drives the counter and flash — idle chats don't re-render.
+
+18.0.1.7.0 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-CHAT M2: foreground/background message hierarchy. Tool
+  messages and intermediate assistant messages (with ``tool_calls``) now
+  collapse into one muted "Work steps (N)" accordion per turn
+  (ChatGPT/Claude thinking-drawer pattern); the first step of a turn
+  renders the toggle, expanding reveals each step's args/result via the
+  existing tool-message component. The final answer (assistant without
+  ``tool_calls``) renders fully expanded. Failed-run error messages
+  (``is_error``) stay prominent outside the drawer.
+* [KOENIG][ADD] Pure message-classification + turn-grouping helpers
+  (``utils/llm_message_classify.js``) — tool / intermediate-assistant /
+  final-answer / error / step / turn-id / first-step / step-count —
+  unit-tested in Hoot (11 tests).
+* [KOENIG][ADD] Per-turn steps-drawer collapse state on the llm store
+  (``stepDrawerOpen`` map + ``toggleStepDrawer`` / ``isStepDrawerOpen``).
+* [KOENIG][ADD] Hoot test runner (``tests/test_js.py``) + the
+  classification Hoot suite
+  (``static/tests/llm_message_classify.test.js``).
+* [KOENIG][FIX] Self-review: ``_extras_to_store`` now serializes
+  ``is_error`` so the frontend can classify failed-run error messages
+  (was missing — ``isLLMError`` was always false on the client, so error
+  prominence silently did not work). New
+  ``tests/test_mail_message_store.py``.
+* [KOENIG][FIX] Self-review: the Message ``className`` getter (where the
+  hierarchy classes live) was dead code — the base ``attClass`` only
+  forwards ``props.className``. Patched ``attClass`` to merge
+  ``this.className`` so ``o-llm-step`` / ``o-llm-step-collapsed`` /
+  ``o-llm-message-error`` / ``o-llm-final-answer`` actually reach the DOM.
+* [KOENIG][FIX] Self-review: ``llm.store`` in the Message patch is now
+  wrapped in ``useState`` (matches composer_patch / llm_thread_header) —
+  without it the drawer-toggle and run-state reads did not re-render.
+
+18.0.1.6.0 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-CHAT M1: assistant answers now render at wiki-page
+  markdown fidelity. ``_process_llm_body`` extras aligned with the wiki
+  content converter (``koenig_wiki_outline_importer`` ``ContentConverter``)
+  — added ``task_list`` (``- [ ]`` / ``- [x]`` checkboxes),
+  ``code-friendly`` (identifiers with underscores no longer turn into
+  italic/bold), and ``break-on-newline`` (single newlines render as
+  ``<br>``, the ChatGPT/Claude chat convention). ``header-ids``
+  deliberately skipped (heading anchors are noise in a chat bubble).
+* [KOENIG][ADD] New ``.o-llm-md-body`` SCSS scope on assistant message
+  bodies: bordered/striped tables, dark fenced code blocks, inline code,
+  blockquotes, compact headings, task-list checkboxes, subtle links —
+  ported from the wiki client action style reference, scoped under
+  ``o-llm-message-assistant`` so tool/user/mail messages are untouched.
+* [KOENIG][ADD] Copy button on assistant answers — copies the markdown
+  source when ``body_json.markdown`` is present, else the rendered plain
+  text (clipboard API; no-op on non-secure contexts).
+* [KOENIG][ADD] Python test suite for ``_process_llm_body`` (tables, task
+  lists, emoji survival + shortcode conversion, fenced code, code-friendly,
+  break-on-newline, strike, Markup passthrough, empty body).
+
 18.0.1.5.4 (2026-07-07)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
