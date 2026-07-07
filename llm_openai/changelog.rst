@@ -1,3 +1,13 @@
+18.0.1.4.10 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] Sanitize harmony-format channel tokens leaked into tool-call
+  names by gpt-oss models (e.g. ``odoo_model_inspector<|channel|>commentary``).
+  The mangled name failed the downstream tool lookup ("Tool '...' not found
+  in thread") and the conversation silently stalled without a user-visible
+  error. Applied in both the non-streaming and streaming tool-call assembly
+  paths (``_sanitize_tool_name``).
+
 18.0.1.4.9 (2026-07-03)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

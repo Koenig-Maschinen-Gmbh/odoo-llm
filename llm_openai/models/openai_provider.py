@@ -249,7 +249,7 @@ class LLMProvider(models.Model):
                         "id": tc.id,
                         "type": tc.type,
                         "function": {
-                            "name": tc.function.name,
+                            "name": self._sanitize_tool_name(tc.function.name),
                             "arguments": tc.function.arguments,
                         },
                     }
@@ -351,7 +351,9 @@ class LLMProvider(models.Model):
                                         "function",
                                     ),  # Default type
                                     "function": {
-                                        "name": call_data["function"]["name"],
+                                        "name": self._sanitize_tool_name(
+                                            call_data["function"]["name"],
+                                        ),
                                         "arguments": call_data["function"]["arguments"],
                                     },
                                 },
@@ -375,6 +377,25 @@ class LLMProvider(models.Model):
 
         except Exception as e:
             yield {"error": f"Internal error processing stream: {e}"}
+
+    @api.model
+    def _sanitize_tool_name(self, name):
+        """Strip harmony-format channel tokens leaked into tool names.
+
+        KOENIG fork change: gpt-oss models (IONOS/Scaleway) occasionally emit
+        tool calls whose name carries harmony response-format tokens, e.g.
+        ``odoo_model_inspector<|channel|>commentary``. The downstream tool
+        lookup then fails with "Tool '...' not found in thread" and the
+        conversation silently stalls. The real tool name is everything before
+        the first ``<|`` token.
+        """
+        if name and "<|" in name:
+            sanitized = name.split("<|", 1)[0].strip()
+            _logger.warning(
+                "Sanitized harmony-mangled tool name %r -> %r", name, sanitized
+            )
+            return sanitized
+        return name
 
     def _update_openai_tool_call_chunk(self, tool_call_chunks, tool_call_chunk, index):
         """
