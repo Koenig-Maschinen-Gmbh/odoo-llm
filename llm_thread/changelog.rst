@@ -1,3 +1,13 @@
+18.0.1.5.4 (2026-07-07)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] Assistant answers now render markdown pipe tables as real
+  (Bootstrap-styled) HTML tables — the ``tables`` extra was missing from the
+  ``markdown2`` call, so tables displayed as raw ``| a | b |`` text.
+* [KOENIG][FIX] Emoji no longer appear as ``:factory:``-style text markers:
+  ``_process_llm_body`` used ``emoji.demojize`` (emoji → shortcode text);
+  now ``emoji.emojize`` (shortcode → emoji, real emoji untouched).
+
 18.0.1.5.3 (2026-06-26)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

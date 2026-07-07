@@ -286,10 +286,27 @@ class LLMThread(models.Model):
         """Process body content for LLM messages (markdown to HTML conversion).
 
         Skips processing if body is already Markup (pre-formatted HTML).
+
+        KOENIG fork fixes (2026-07-07):
+        - ``emoji.emojize`` instead of ``demojize``: models emit real emoji;
+          demojize converted them INTO ``:factory:``-style text markers in
+          the rendered answer. emojize renders shortcodes to emoji and
+          leaves real emoji untouched.
+        - ``tables`` extra: pipe tables (the models' standard table format)
+          previously rendered as raw ``| a | b |`` text. ``html-classes``
+          maps them onto Bootstrap table styling.
         """
         if not body or isinstance(body, Markup):
             return body
-        return markdown2.markdown(emoji.demojize(body))
+        return markdown2.markdown(
+            emoji.emojize(body, language="alias"),
+            extras={
+                "tables": None,
+                "fenced-code-blocks": None,
+                "strike": None,
+                "html-classes": {"table": "table table-sm"},
+            },
+        )
 
     # ============================================================================
     # STREAMING MESSAGE CREATION
