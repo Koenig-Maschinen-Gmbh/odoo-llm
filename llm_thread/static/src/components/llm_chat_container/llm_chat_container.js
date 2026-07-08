@@ -6,6 +6,20 @@ import { Composer } from "@mail/core/common/composer";
 import { LLMThreadHeader } from "../llm_thread_header/llm_thread_header";
 import { Thread } from "@mail/core/common/thread";
 import { useService } from "@web/core/utils/hooks";
+import { browser } from "@web/core/browser/browser";
+
+// P-CHAT link-navigation: intercept /odoo/<model>/<id> record links in AI
+// answer bodies + route them through the action service (doAction) so the
+// record form opens via the SPA action stack — giving a breadcrumb back to
+// the AI thread. A plain <a href="/odoo/..."> click would otherwise be
+// SPA-navigated by the router (router.js global handler) but the router's
+// loadState REPLACES the action stack → no breadcrumb back. doAction PUSHES
+// onto the stack → breadcrumb back works. ev.preventDefault() prevents the
+// router's handler from double-firing (it checks ev.defaultPrevented).
+// Pattern: koenig_wiki/static/src/wiki_editor.js (_handleMentionClick /
+// _anchorClickTarget, lines 808-832 + 926-932). PDF preview links
+// (/web/content/...) + external links → browser default.
+const _ODOO_RECORD_LINK_RE = /^\/odoo\/([a-z][a-z0-9_.]+)\/(\d+)\b/;
 
 /**
  * LLM Chat Container - Main container for LLM chat UI
@@ -140,6 +154,59 @@ export class LLMChatContainer extends Component {
   get activeThread() {
     const thread = this.mailStore.discuss?.thread;
     return thread;
+  }
+
+  /**
+   * P-CHAT link-navigation: delegated click handler on the thread message
+   * area. Intercepts <a href="/odoo/<model>/<id>"> record links (from M4
+   * enrich_html / the record-link [[model:id label]] markers) + routes them
+   * through the action service so the record opens via the SPA action stack
+   * (breadcrumb back to the AI thread). Ctrl/Cmd/middle-click → new tab.
+   * External links, #anchors, and /web/content/ PDF preview links → browser
+   * default. Bound on the threadScrollable div (t-on-click in the template).
+   */
+  onThreadAreaClick(ev) {
+    if (ev.defaultPrevented || ev.target.closest("[contenteditable]")) {
+      return;
+    }
+    const a = ev.target.closest("a");
+    if (!a) {
+      return;
+    }
+    let href = a.getAttribute("href") || "";
+    if (!href || href.startsWith("#")) {
+      return;
+    }
+    // Strip our own origin so absolute same-origin links route in-app.
+    const origin = browser.location.origin;
+    if (origin && href.startsWith(origin)) {
+      href = href.slice(origin.length) || "/";
+    }
+    // Only intercept /odoo/<model>/<id> record links. PDF preview links
+    // (/web/content/...) + external links → browser default.
+    const match = href.match(_ODOO_RECORD_LINK_RE);
+    if (!match) {
+      return;
+    }
+    const model = match[1];
+    const id = parseInt(match[2], 10);
+    if (!model || !Number.isFinite(id)) {
+      return;
+    }
+    ev.preventDefault();
+    const newTab = ev.ctrlKey || ev.metaKey || ev.button === 1;
+    if (newTab) {
+      browser.open(a.href, "_blank", "noopener");
+      return;
+    }
+    // Push the record form onto the action stack → breadcrumb back to the chat.
+    this.action.doAction({
+      type: "ir.actions.act_window",
+      res_model: model,
+      res_id: id,
+      views: [[false, "form"]],
+      target: "current",
+    });
   }
 
   /**

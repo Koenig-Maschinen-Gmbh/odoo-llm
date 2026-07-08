@@ -287,10 +287,13 @@
                     <LLMThreadHeader t-if="!isSmall" thread="activeThread" />
 
                     <!-- Thread area - reuse mail's Thread component -->
+                    <!-- P-CHAT link-navigation: t-on-click intercepts /odoo/<model>/<id>
+                         record links in AI answer bodies → doAction (breadcrumb back). -->
                     <div
             t-ref="threadScrollable"
             class="o-llm-thread-area flex-grow-1 overflow-auto p-3"
             style="min-height: 0;"
+            t-on-click="onThreadAreaClick"
           >
                         <Thread
               thread="activeThread"

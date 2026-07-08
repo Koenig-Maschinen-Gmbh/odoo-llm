@@ -5,6 +5,7 @@ import { Component, onWillDestroy, onWillStart, useState } from "@odoo/owl";
 import { LLMChatContainer } from "@llm_thread/components/llm_chat_container/llm_chat_container";
 import { registry } from "@web/core/registry";
 import { useService } from "@web/core/utils/hooks";
+import { useSetupAction } from "@web/search/action_hook";
 
 /**
  * LLM Chat Client Action - Main entry point for LLM chat functionality
@@ -21,6 +22,16 @@ export class LLMChatClientAction extends Component {
     this.orm = useService("orm");
     this.notification = useService("notification");
 
+    // P-CHAT link-navigation: save the active thread id when the user navigates
+    // away (e.g. clicks a record link → doAction pushes the form onto the
+    // action stack). On breadcrumb-back, the action service feeds the saved
+    // state back as props.state → we re-select the same thread. Mirrors the
+    // OCB pattern used by every controller (form/list/kanban/…) + the König
+    // wiki client action (wiki_client_action.js useSetupAction).
+    useSetupAction({
+      getLocalState: () => this._getLocalState(),
+    });
+
     onWillStart(() => {
       return this.initializeLLMChat(this.props);
     });
@@ -28,6 +39,24 @@ export class LLMChatClientAction extends Component {
     onWillDestroy(() => {
       this.cleanup();
     });
+  }
+
+  /**
+   * Snapshot the active thread id for breadcrumb-back restoration.
+   * Called by the action service via useSetupAction when this controller
+   * is about to be left for another action.
+   */
+  _getLocalState() {
+    return { activeThreadId: this._activeThreadId() };
+  }
+
+  /**
+   * The active llm.thread id (or false). The active thread lives on
+   * mail.store.discuss.thread when it's an llm.thread.
+   */
+  _activeThreadId() {
+    const thread = this.mailStore.discuss?.thread;
+    return thread?.model === "llm.thread" ? thread.id : false;
   }
 
   /**
@@ -41,6 +70,16 @@ export class LLMChatClientAction extends Component {
       // mailStore.isReady ensures threads are loaded via init_messaging
       // llmStore.isReady ensures providers, models, tools are loaded
       await Promise.all([this.mailStore.isReady, this.llmStore.isReady]);
+
+      // P-CHAT link-navigation: breadcrumb-restore. When the user navigates
+      // back to this controller via the breadcrumb (after opening a record
+      // from an AI answer), the action service feeds the saved state back as
+      // props.state. Re-select the same thread instead of loading the default.
+      const restoredThreadId = props.state?.activeThreadId;
+      if (restoredThreadId) {
+        await this.selectLLMThread(restoredThreadId);
+        return;
+      }
 
       const activeId = this.getActiveId(props);
 

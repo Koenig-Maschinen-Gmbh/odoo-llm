@@ -1,3 +1,21 @@
+18.0.1.11.0 (2026-07-08)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-CHAT link-navigation: clicking an Odoo record link
+  (``/odoo/<model>/<id>``) in an AI answer now opens the record via the
+  action service (``doAction``) — pushing the form onto the SPA action
+  stack so the breadcrumb navigates **back to the AI thread**. Previously
+  the router's global SPA handler loaded the record but REPLACED the
+  action stack (no breadcrumb back). ``LLMChatClientAction`` gained
+  ``useSetupAction({ getLocalState })`` (the canonical OCB pattern, used
+  by every controller) to save the active thread id on leave + restore it
+  on breadcrumb-back. ``LLMChatContainer`` gained a delegated click
+  handler on the thread area that intercepts ``/odoo/<model>/<id>``
+  links → ``doAction`` (plain click) or ``window.open`` (Ctrl/Cmd/middle).
+  External links + ``/web/content/`` PDF preview links → browser default.
+  Pattern: ``koenig_wiki/static/src/wiki_editor.js`` (the proven wiki
+  implementation).
+
 18.0.1.10.0 (2026-07-07)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
