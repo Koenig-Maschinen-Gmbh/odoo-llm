@@ -528,17 +528,26 @@ export const llmStoreService = {
       },
 
       /**
-       * Re-fetch the user's messaging data so new messages (e.g. the
-       * assistant answer posted by a background orchestration run) appear
-       * without a manual page reload. Uses the standard init_messaging
-       * refresh path (same as refreshThreadsAndSelect).
+       * Re-fetch the thread's messages so new messages (e.g. the assistant
+       * answer posted by a background orchestration run) appear without a
+       * manual page reload. Uses the OCB Thread model's ``fetchMessages()``
+       * — the canonical message-reload path (thread_model.js line 679). The
+       * previous implementation called ``mailStore.fetchData({ init_messaging:
+       * {} })`` which refreshes the thread LIST but does NOT re-fetch the
+       * specific thread's messages → the new answer stayed invisible.
        */
       async reloadThreadMessages(threadId) {
         if (!threadId) {
           return;
         }
         try {
-          await mailStore.fetchData({ init_messaging: {} });
+          const thread = mailStore.Thread.get({
+            model: "llm.thread",
+            id: threadId,
+          });
+          if (thread) {
+            await thread.fetchMessages();
+          }
         } catch (error) {
           console.warn("[llm.store] reloadThreadMessages failed:", error);
         }

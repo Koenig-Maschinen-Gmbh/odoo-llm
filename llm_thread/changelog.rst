@@ -1,3 +1,17 @@
+18.0.1.11.1 (2026-07-08)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] P-CHAT M3: ``reloadThreadMessages`` now calls
+  ``thread.fetchMessages()`` (the OCB Thread model's canonical
+  message-reload path, thread_model.js line 679) instead of
+  ``mailStore.fetchData({ init_messaging: {} })``. The latter refreshes
+  the thread LIST but does NOT re-fetch the specific thread's messages
+  → the assistant answer (posted by a background orchestration run)
+  stayed invisible without a manual page reload. This was the root cause
+  of "no live update of the thread contents" — the bus events were
+  posted correctly (verified: 32 bus.bus records for
+  koenig.ai.orchestration) but the reload didn't fetch the messages.
+
 18.0.1.11.0 (2026-07-08)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
