@@ -20,102 +20,13 @@
                     'o-visible': state.isMobileSidebarVisible
                 }"
       >
-                <!-- Sidebar Header -->
-                <div
-          class="o-llm-sidebar-header d-flex align-items-center justify-content-between border-bottom p-3"
-        >
-                    <h6 class="mb-0 text-muted">Conversations</h6>
-                    <button
-            class="btn btn-sm btn-primary"
-            t-on-click="createNewThread"
-            title="New Thread"
-          >
-                        <i class="fa fa-plus" />
-                    </button>
-                </div>
-
-                <!-- Thread List -->
-                <div class="flex-grow-1 overflow-auto">
-                    <!-- Empty State -->
-                    <div
-            t-if="filteredThreadList.length === 0"
-            class="p-3 text-center text-muted"
-          >
-                        <i class="fa fa-comments-o fa-2x mb-2" />
-                        <div>No conversations yet</div>
-                        <small>Start your first AI chat</small>
-                    </div>
-
-                    <!-- Thread Items -->
-                    <t
-            t-foreach="filteredThreadList"
-            t-as="thread"
-            t-key="thread.id"
-          >
-                        <div
-              class="o-llm-thread-item p-3 border-bottom cursor-pointer"
-              t-att-class="{ 'o-llm-thread-active': thread.id === activeThread?.id }"
-              t-on-click.stop.prevent="() => this.selectThread(thread.id)"
-              t-att-title="thread.name"
-            >
-                            <div
-                class="d-flex justify-content-between align-items-start"
-              >
-                                <div class="flex-grow-1 min-width-0">
-                                    <div
-                    class="text-truncate fw-medium"
-                    t-esc="thread.name"
-                  />
-                                    <div class="text-muted small mt-1">
-                                        <span
-                      t-if="thread.write_date"
-                      t-esc="formatDate(thread.write_date)"
-                    />
-                                    </div>
-                                </div>
-                                <div
-                class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
-              >
-                                    <!-- P-CHAT M3: live run feedback -->
-                                    <t
-                    t-if="threadElapsedLabel(thread.id)"
-                  >
-                                        <i
-                      class="fa fa-circle-o-notch fa-spin text-primary me-1"
-                      aria-hidden="true"
-                    />
-                                        <t
-                      t-esc="threadElapsedLabel(thread.id)"
-                    />
-                                    </t>
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'done'"
-                    class="fa fa-check-circle text-success"
-                    title="Done"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'failed'"
-                    class="fa fa-exclamation-circle text-danger"
-                    title="Failed"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
-                    class="fa fa-ban text-muted"
-                    title="Cancelled"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="isStreamingThread(thread.id)"
-                    class="fa fa-circle-o-notch fa-spin text-primary"
-                    aria-hidden="true"
-                  />
-                                </div>
-                            </div>
-                        </div>
-                    </t>
-                </div>
+                <LLMSidebar
+          recordModel="props.recordModel"
+          recordId="props.recordId"
+          isMobile="isSmall"
+          onSelectThread="(threadId) => this.selectThread(threadId)"
+          onCreateThread="() => this.createNewThread()"
+        />
             </div>
 
             <!-- Desktop Sidebar: Expand/collapse pattern (shown when isSmall = false) -->
@@ -124,131 +35,15 @@
         class="o-llm-sidebar d-flex flex-column border-end"
         t-att-style="state.isSidebarCollapsed ? 'width: 48px;' : 'width: 280px;'"
       >
-                <!-- Sidebar Header - matches height of chat header -->
-                <div
-          class="o-llm-sidebar-header d-flex align-items-center border-bottom"
-          t-att-class="state.isSidebarCollapsed ? 'justify-content-center px-2 py-3' : 'justify-content-between p-3'"
-        >
-                    <!-- Expanded state: Header content + collapse button on right -->
-                    <t t-if="!state.isSidebarCollapsed">
-                        <div class="d-flex align-items-center gap-2">
-                            <h6 class="mb-0 text-muted">Conversations</h6>
-                            <button
-                class="btn btn-sm btn-primary"
-                t-on-click="createNewThread"
-                title="New Thread"
-              >
-                                <i class="fa fa-plus" />
-                            </button>
-                        </div>
-                        <!-- Collapse button (Odoo Apps style classes) -->
-                        <button
-              class="btn btn-secondary btn-sm px-2 py-1"
-              t-on-click="toggleSidebar"
-              title="Collapse sidebar"
-            >
-                            <i class="oi oi-panel-right" />
-                        </button>
-                    </t>
-
-                    <!-- Collapsed state: Centered expand button -->
-                    <t t-else="">
-                        <button
-              class="btn btn-secondary btn-sm px-2 py-1"
-              t-on-click="toggleSidebar"
-              title="Expand sidebar"
-            >
-                            <i
-                class="oi oi-panel-right"
-                style="transform: rotate(180deg);"
-              />
-                        </button>
-                    </t>
-                </div>
-
-                <!-- Thread List (only when expanded) -->
-                <div
-          t-if="!state.isSidebarCollapsed"
-          class="flex-grow-1 overflow-auto"
-        >
-                    <div
-            t-if="filteredThreadList.length === 0"
-            class="p-3 text-center text-muted"
-          >
-                        <i class="fa fa-comments-o fa-2x mb-2" />
-                        <div>No conversations yet</div>
-                        <small>Start your first AI chat</small>
-                    </div>
-
-                    <t
-            t-foreach="filteredThreadList"
-            t-as="thread"
-            t-key="thread.id"
-          >
-                        <div
-              class="o-llm-thread-item p-3 border-bottom cursor-pointer"
-              t-att-class="{ 'o-llm-thread-active': thread.id === activeThread?.id }"
-              t-on-click.stop.prevent="() => this.selectThread(thread.id)"
-              t-att-title="thread.name"
-            >
-                            <div
-                class="d-flex justify-content-between align-items-start"
-              >
-                                <div class="flex-grow-1 min-width-0">
-                                    <div
-                    class="text-truncate fw-medium"
-                    t-esc="thread.name"
-                  />
-                                    <div class="text-muted small mt-1">
-                                        <span
-                      t-if="thread.write_date"
-                      t-esc="formatDate(thread.write_date)"
-                    />
-                                    </div>
-                                </div>
-                                <div
-                class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
-              >
-                                    <!-- P-CHAT M3: live run feedback -->
-                                    <t
-                    t-if="threadElapsedLabel(thread.id)"
-                  >
-                                        <i
-                      class="fa fa-circle-o-notch fa-spin text-primary me-1"
-                      aria-hidden="true"
-                    />
-                                        <t
-                      t-esc="threadElapsedLabel(thread.id)"
-                    />
-                                    </t>
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'done'"
-                    class="fa fa-check-circle text-success"
-                    title="Done"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'failed'"
-                    class="fa fa-exclamation-circle text-danger"
-                    title="Failed"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
-                    class="fa fa-ban text-muted"
-                    title="Cancelled"
-                    aria-hidden="true"
-                  />
-                                    <i
-                    t-elif="isStreamingThread(thread.id)"
-                    class="fa fa-circle-o-notch fa-spin text-primary"
-                    aria-hidden="true"
-                  />
-                                </div>
-                            </div>
-                        </div>
-                    </t>
-                </div>
+                <LLMSidebar
+          recordModel="props.recordModel"
+          recordId="props.recordId"
+          isMobile="isSmall"
+          isCollapsed="state.isSidebarCollapsed"
+          onSelectThread="(threadId) => this.selectThread(threadId)"
+          onCreateThread="() => this.createNewThread()"
+          onToggleSidebar="() => this.toggleSidebar()"
+        />
             </div>
 
             <!-- Main Chat Area -->
@@ -308,7 +103,7 @@
             class="o-llm-streaming-indicator p-2 text-center text-muted flex-shrink-0"
           >
                         <i
-              class="fa fa-circle-o-notch fa-spin"
+            class="fa fa-circle-o-notch fa-spin"
             /> AI is thinking...
                     </div>
 

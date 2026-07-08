@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="llm_thread.LLMSidebar">
+        <!-- Collapsed (desktop only): a centered expand button. -->
+        <div
+            t-if="props.isCollapsed"
+            class="o-llm-sidebar-header d-flex align-items-center justify-content-center px-2 py-3 border-bottom"
+        >
+            <button
+                type="button"
+                class="btn btn-secondary btn-sm px-2 py-1"
+                t-on-click="toggleSidebar"
+                title="Expand sidebar"
+            >
+                <i class="oi oi-panel-right" style="transform: rotate(180deg);" />
+            </button>
+        </div>
+
+        <!-- Expanded: full sidebar (mobile slide-in + desktop expanded share
+             this markup; the container's wrapper handles the layout). -->
+        <div t-else="" class="d-flex flex-column flex-grow-1 min-vh-0">
+            <!-- Header -->
+            <div
+                class="o-llm-sidebar-header d-flex align-items-center justify-content-between border-bottom p-3"
+            >
+                <div class="d-flex align-items-center gap-2">
+                    <h6 class="mb-0 text-muted">Conversations</h6>
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-primary"
+                        t-on-click="createNewThread"
+                        title="New Thread"
+                    >
+                        <i class="fa fa-plus" />
+                    </button>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-link px-1 py-0"
+                        t-att-class="{ 'active fw-bold': state.selectMode }"
+                        t-on-click="toggleSelectMode"
+                        title="Select threads"
+                    >
+                        <i class="fa fa-check-square-o" />
+                    </button>
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-link px-1 py-0"
+                        t-att-class="{ 'active fw-bold': state.showArchived }"
+                        t-on-click="() => this.state.showArchived = !this.state.showArchived"
+                        title="Show archived"
+                    >
+                        <i class="fa fa-archive" />
+                    </button>
+                    <button
+                        t-if="!props.isMobile"
+                        type="button"
+                        class="btn btn-secondary btn-sm px-2 py-1"
+                        t-on-click="toggleSidebar"
+                        title="Collapse sidebar"
+                    >
+                        <i class="oi oi-panel-right" />
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search -->
+            <div class="o-llm-sidebar-search p-2 border-bottom">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white border-end-0">
+                        <i class="fa fa-search text-muted" />
+                    </span>
+                    <input
+                        type="text"
+                        class="form-control border-start-0"
+                        placeholder="Search conversations…"
+                        t-model="state.searchVal"
+                        t-on-input="onSearchInput"
+                    />
+                    <button
+                        t-if="state.searchVal"
+                        type="button"
+                        class="btn btn-sm btn-link px-1"
+                        t-on-click="clearSearch"
+                        title="Clear search"
+                    >
+                        <i class="fa fa-times text-muted" />
+                    </button>
+                </div>
+            </div>
+
+            <!-- Bulk-action toolbar (select mode) -->
+            <div
+                t-if="state.selectMode"
+                class="o-llm-sidebar-toolbar d-flex align-items-center gap-1 border-bottom p-2 flex-shrink-0"
+            >
+                <small class="text-muted me-1">
+                    <t t-out="selectedCount" /> selected
+                </small>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-link px-1"
+                    t-on-click="selectAllVisible"
+                    title="Select all visible"
+                >
+                    <i class="fa fa-list" />
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-link px-1"
+                    t-att-disabled="!selectedCount"
+                    t-on-click="bulkTag"
+                    title="Tag selected"
+                >
+                    <i class="fa fa-tag" />
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-link px-1"
+                    t-att-disabled="!selectedCount"
+                    t-on-click="bulkArchive"
+                    title="Archive selected"
+                >
+                    <i class="fa fa-archive" />
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-link px-1 text-danger"
+                    t-att-disabled="!selectedCount"
+                    t-on-click="bulkDelete"
+                    title="Delete selected"
+                >
+                    <i class="fa fa-trash-o" />
+                </button>
+            </div>
+
+            <!-- Thread list -->
+            <div class="o-llm-sidebar-list flex-grow-1 overflow-auto">
+                <!-- Empty state -->
+                <div
+                    t-if="filteredThreadList.length === 0"
+                    class="p-3 text-center text-muted"
+                >
+                    <i class="fa fa-comments-o fa-2x mb-2" />
+                    <div>No conversations found</div>
+                    <small t-if="state.searchVal">Try a different search</small>
+                    <small t-else="">Start your first AI chat</small>
+                </div>
+
+                <!-- Grouped by date bucket -->
+                <t
+                    t-foreach="groupedThreadList"
+                    t-as="bucket"
+                    t-key="bucket.key"
+                >
+                    <div class="o-llm-bucket">
+                        <div
+                            class="o-llm-bucket-header d-flex align-items-center justify-content-between px-3 py-1 text-muted small cursor-pointer"
+                            t-on-click="() => this.toggleBucket(bucket.key)"
+                        >
+                            <span class="text-truncate">
+                                <i
+                                    t-att-class="isBucketCollapsed(bucket.key) ? 'fa fa-caret-right me-1' : 'fa fa-caret-down me-1'"
+                                />
+                                <t t-out="bucket.label" />
+                            </span>
+                            <span class="badge rounded-pill bg-light text-muted">
+                                <t t-out="bucket.threads.length" />
+                            </span>
+                        </div>
+                        <t t-if="!isBucketCollapsed(bucket.key)">
+                            <t
+                                t-foreach="bucket.threads"
+                                t-as="thread"
+                                t-key="thread.id"
+                            >
+                                <div
+                                    class="o-llm-thread-item p-3 border-bottom cursor-pointer"
+                                    t-att-class="{
+                                        'o-llm-thread-active': thread.id === activeThread?.id,
+                                        'o-llm-thread-archived': thread.active === false,
+                                        'o-llm-thread-selected': state.selectedThreadIds[thread.id],
+                                    }"
+                                    t-on-click="() => this.selectThread(thread.id)"
+                                    t-att-title="thread.name"
+                                >
+                                    <div class="d-flex align-items-start">
+                                        <input
+                                            t-if="state.selectMode"
+                                            type="checkbox"
+                                            class="form-check-input me-2 mt-1 flex-shrink-0"
+                                            t-att-checked="Boolean(state.selectedThreadIds[thread.id])"
+                                            t-on-click.stop="() => this.toggleSelectThread(thread.id)"
+                                        />
+                                        <div class="flex-grow-1 min-width-0">
+                                            <div
+                                                class="text-truncate fw-medium"
+                                                t-out="thread.name"
+                                            />
+                                            <div class="text-muted small mt-1 d-flex align-items-center gap-2">
+                                                <span
+                                                    t-if="thread.model_id"
+                                                    class="text-truncate"
+                                                    t-out="thread.model_id.name"
+                                                />
+                                                <span
+                                                    t-if="thread.write_date"
+                                                    t-out="formatDate(thread.write_date)"
+                                                />
+                                            </div>
+                                            <!-- Tag badges -->
+                                            <div
+                                                t-if="thread.tag_ids and thread.tag_ids.length"
+                                                class="d-flex flex-wrap gap-1 mt-1"
+                                            >
+                                                <t
+                                                    t-foreach="thread.tag_ids"
+                                                    t-as="tag"
+                                                    t-key="tag.id"
+                                                >
+                                                    <span
+                                                        t-attf-class="o_tag badge rounded-pill o_tag_color_{{ tag.color or 0 }}"
+                                                        t-out="tag.name"
+                                                    />
+                                                </t>
+                                            </div>
+                                        </div>
+                                        <div
+                                            class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
+                                        >
+                                            <!-- P-CHAT M3: live run feedback -->
+                                            <t t-if="threadElapsedLabel(thread.id)">
+                                                <i
+                                                    class="fa fa-circle-o-notch fa-spin text-primary me-1"
+                                                    aria-hidden="true"
+                                                />
+                                                <t t-out="threadElapsedLabel(thread.id)" />
+                                            </t>
+                                            <i
+                                                t-elif="threadFinishedFlash(thread.id) === 'done'"
+                                                class="fa fa-check-circle text-success"
+                                                title="Done"
+                                                aria-hidden="true"
+                                            />
+                                            <i
+                                                t-elif="threadFinishedFlash(thread.id) === 'failed'"
+                                                class="fa fa-exclamation-circle text-danger"
+                                                title="Failed"
+                                                aria-hidden="true"
+                                            />
+                                            <i
+                                                t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
+                                                class="fa fa-ban text-muted"
+                                                title="Cancelled"
+                                                aria-hidden="true"
+                                            />
+                                            <i
+                                                t-elif="isStreamingThread(thread.id)"
+                                                class="fa fa-circle-o-notch fa-spin text-primary"
+                                                aria-hidden="true"
+                                            />
+                                        </div>
+                                    </div>
+                                    <!-- Per-item actions (hover) -->
+                                    <div
+                                        class="o-llm-thread-actions d-flex gap-1 mt-1"
+                                        t-if="!state.selectMode"
+                                    >
+                                        <button
+                                            t-if="thread.active !== false"
+                                            type="button"
+                                            class="btn btn-sm btn-link px-1 py-0 text-muted"
+                                            t-on-click.stop.prevent="() => this.archiveThread(thread)"
+                                            title="Archive"
+                                        >
+                                            <i class="fa fa-archive" />
+                                        </button>
+                                        <button
+                                            t-if="thread.active === false"
+                                            type="button"
+                                            class="btn btn-sm btn-link px-1 py-0 text-muted"
+                                            t-on-click.stop.prevent="() => this.unarchiveThread(thread)"
+                                            title="Unarchive"
+                                        >
+                                            <i class="fa fa-undo" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-link px-1 py-0 text-muted o-llm-thread-delete"
+                                            t-on-click.stop.prevent="() => this.deleteThread(thread)"
+                                            title="Delete"
+                                        >
+                                            <i class="fa fa-trash-o" />
+                                        </button>
+                                    </div>
+                                </div>
+                            </t>
+                        </t>
+                    </div>
+                </t>
+            </div>
+        </div>
+    </t>
+</templates>

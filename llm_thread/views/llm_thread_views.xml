@@ -28,6 +28,11 @@
                 widget="many2many_tags"
                 options="{'no_create': True}"
               />
+                            <field
+                name="tag_ids"
+                widget="many2many_tags"
+                options="{'color_field': 'color', 'no_create_edit': True}"
+              />
                         </group>
                         <group>
                             <field name="model" readonly="1" />
@@ -68,6 +73,29 @@
                 <field name="model_id" />
                 <field name="model" />
                 <field name="res_id" />
+                <field
+                    name="tag_ids"
+                    string="Tag"
+                    filter_domain="[('tag_ids', 'ilike', self)]"
+                />
+                <separator />
+                <filter
+                    string="Active"
+                    name="active"
+                    domain="[('active', '=', True)]"
+                />
+                <filter
+                    string="Archived"
+                    name="inactive"
+                    domain="[('active', '=', False)]"
+                />
+                <group expand="0" string="Group By">
+                    <filter
+                        string="Tag"
+                        name="group_tag"
+                        context="{'group_by': 'tag_ids'}"
+                    />
+                </group>
             </search>
         </field>
     </record>

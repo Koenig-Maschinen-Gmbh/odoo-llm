@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.11.1",
+    "version": "18.0.1.12.0",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -41,6 +41,7 @@ Contact: support@apexive.com
         "security/llm_thread_security.xml",
         "security/ir.model.access.csv",
         "views/llm_thread_views.xml",
+        "views/llm_thread_tag_views.xml",
         "views/menu.xml",
     ],
     "assets": {
@@ -65,12 +66,22 @@ Contact: support@apexive.com
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.js",
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.xml",
             "llm_thread/static/src/components/llm_tool_message/llm_tool_message.scss",
+            # P-UX: Sidebar (thread & memory management UX — grouping/search/
+            # tags/archive/bulk). Extracted from LLMChatContainer.
+            "llm_thread/static/src/components/llm_sidebar/llm_sidebar.js",
+            "llm_thread/static/src/components/llm_sidebar/llm_sidebar.xml",
+            "llm_thread/static/src/components/llm_sidebar/llm_sidebar.scss",
+            # P-UX: bulk-tag picker dialog
+            "llm_thread/static/src/components/llm_bulk_tag_dialog/llm_bulk_tag_dialog.js",
+            "llm_thread/static/src/components/llm_bulk_tag_dialog/llm_bulk_tag_dialog.xml",
             # Markdown body styling for assistant answers (P-CHAT M1)
             "llm_thread/static/src/components/llm_md_body/llm_md_body.scss",
             # Steps drawer + error prominence (P-CHAT M2)
             "llm_thread/static/src/components/llm_steps/llm_steps.scss",
             # Message classification helpers (P-CHAT M2) — used by message_patch.js
             "llm_thread/static/src/utils/llm_message_classify.js",
+            # P-UX: date-bucket grouping helper — used by llm_sidebar.js
+            "llm_thread/static/src/utils/llm_date_bucket.js",
             # Patches - Safe extensions of mail components with conditional LLM logic
             "llm_thread/static/src/patches/composer_patch.js",
             "llm_thread/static/src/patches/composer_patch.xml",
@@ -94,6 +105,9 @@ Contact: support@apexive.com
             "llm_thread/static/tests/llm_message_classify.test.js",
             # P-CHAT M2 — is_error store-field loop-closer.
             "llm_thread/static/tests/llm_message_is_error.test.js",
+            # P-UX — date-bucket grouping helper (pure function) + its Hoot suite.
+            "llm_thread/static/src/utils/llm_date_bucket.js",
+            "llm_thread/static/tests/llm_date_bucket.test.js",
         ],
     },
     "images": [

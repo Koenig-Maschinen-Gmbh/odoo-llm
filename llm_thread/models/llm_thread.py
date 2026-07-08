@@ -145,6 +145,22 @@ class LLMThread(models.Model):
         help="Tools that can be used by the LLM in this thread",
     )
 
+    # P-UX: user-manageable colored tags (sidebar grouping + badges).
+    # NOTE: no explicit relation table here on purpose. ``llm.thread`` has a
+    # prototype-inheriting transient child ``llm.thread.mock`` (``_name`` +
+    # ``_inherit = "llm.thread"`` in ``llm_assistant``) which copies every
+    # M2M field. With an EXPLICIT relation table the copy would collide
+    # ("Many2many fields ... use the same table and columns"); with an AUTO
+    # relation each model gets its own table (``llm_thread_llm_thread_tag_rel``
+    # here, ``llm_thread_mock_llm_thread_tag_rel`` on the mock) — same reason
+    # the existing ``tool_ids`` M2M is auto. There is intentionally no inverse
+    # ``thread_ids`` field on ``llm.thread.tag``: an inverse would need the
+    # same explicit relation and would collide the same way.
+    tag_ids = fields.Many2many(
+        "llm.thread.tag",
+        string="Tags",
+    )
+
     attachment_ids = fields.Many2many(
         "ir.attachment",
         string="All Thread Attachments",
@@ -702,51 +718,141 @@ class LLMThread(models.Model):
     # STORE INTEGRATION - For mail.store compatibility
     # ============================================================================
 
+    def _thread_store_dict(self, thread):
+        """Build the per-thread data dict shipped to the mail store / RPC.
+
+        Shared by ``_thread_to_store`` (store.add) and ``search_threads``
+        (RPC return) so the two paths never drift in shape.
+
+        P-UX: ``active`` and ``tag_ids`` are sent **unconditionally**. The
+        store merges inserts key-by-key, so omitting a key when empty would
+        leave a stale value on the JS record after the last tag is removed
+        or the thread is unarchived.
+        """
+        thread_data = {
+            "id": thread.id,
+            "model": "llm.thread",
+            "name": thread.name,  # Essential for UI display
+            "write_date": thread.write_date,  # For sorting in thread list
+            "channel_type": "llm_chat",  # Custom type for LLM threads
+            "active": thread.active,  # P-UX: archive filter
+            "tag_ids": [  # P-UX: sidebar badges + tag filtering
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "model": "llm.thread.tag",
+                }
+                for tag in thread.tag_ids
+            ],
+        }
+
+        # Related record fields (for linking threads to Odoo records)
+        # Use res_model to avoid conflict with "model": "llm.thread"
+        if thread.model:
+            thread_data["res_model"] = thread.model
+        if thread.res_id:
+            thread_data["res_id"] = thread.res_id
+
+        # Add LLM-specific fields using proper Store.one/Store.many format
+        if thread.provider_id:
+            thread_data["provider_id"] = {
+                "id": thread.provider_id.id,
+                "name": thread.provider_id.name,
+                "model": "llm.provider",
+            }
+
+        if thread.model_id:
+            thread_data["model_id"] = {
+                "id": thread.model_id.id,
+                "name": thread.model_id.name,
+                "model": "llm.model",
+            }
+
+        if thread.tool_ids:
+            thread_data["tool_ids"] = [
+                {"id": tool.id, "name": tool.name, "model": "llm.tool"}
+                for tool in thread.tool_ids
+            ]
+
+        return thread_data
+
     # pylint: disable=missing-return  # void store hook: mutates `store`, no return value
     def _thread_to_store(self, store, **kwargs):
         """Extend base _thread_to_store to include LLM-specific fields."""
         super()._thread_to_store(store, **kwargs)
-
-        # Add LLM-specific thread data
         for thread in self:
-            # Build the data dict with only the fields we need
-            thread_data = {
-                "id": thread.id,
-                "model": "llm.thread",
-                "name": thread.name,  # Essential for UI display
-                "write_date": thread.write_date,  # For sorting in thread list
-                "channel_type": "llm_chat",  # Custom type for LLM threads
-            }
+            store.add("mail.thread", self._thread_store_dict(thread))
 
-            # Related record fields (for linking threads to Odoo records)
-            # Use res_model to avoid conflict with "model": "llm.thread"
-            if thread.model:
-                thread_data["res_model"] = thread.model
-            if thread.res_id:
-                thread_data["res_id"] = thread.res_id
+    def _thread_to_store_data(self):
+        """Return the list of per-thread store dicts (RPC-friendly).
 
-            # Add LLM-specific fields using proper Store.one/Store.many format
-            if thread.provider_id:
-                thread_data["provider_id"] = {
-                    "id": thread.provider_id.id,
-                    "name": thread.provider_id.name,
-                    "model": "llm.provider",
-                }
+        Same shape as ``_thread_to_store`` but for ``search_threads`` return
+        value — the JS caller merges the results into the mail store via
+        ``mailStore.insert()``.
+        """
+        return [self._thread_store_dict(thread) for thread in self]
 
-            if thread.model_id:
-                thread_data["model_id"] = {
-                    "id": thread.model_id.id,
-                    "name": thread.model_id.name,
-                    "model": "llm.model",
-                }
+    @api.model
+    def search_threads(self, search_term, limit=50):
+        """Search the current user's threads by name or message content.
 
-            if thread.tool_ids:
-                thread_data["tool_ids"] = [
-                    {"id": tool.id, "name": tool.name, "model": "llm.tool"}
-                    for tool in thread.tool_ids
-                ]
-
-            store.add("mail.thread", thread_data)
+        Name matches are fast and owner-scoped by the ``llm_thread_rule_personal``
+        record rule. Content matches scan ``mail.message`` rows
+        (``model='llm.thread'`` + ``res_id``) — pre-scoped to the user's own
+        threads first so the (expensive, document-based) ``mail.message``
+        search stays both fast and unambiguous. ``active_test=False`` so
+        archived threads are findable (search is the main way back to an
+        archived thread). ``body`` is HTML, so a plain ``ilike`` can also
+        match markup — acceptable for v1.
+        """
+        if not search_term or len(search_term.strip()) < 2:
+            return []
+        term = search_term.strip()
+        # Name match (fast; record rule scopes to owner). ``active_test=False``
+        # so archived threads are findable by name — search is the main way back
+        # to an archived thread.
+        name_matches = self.with_context(active_test=False).search(
+            [("user_id", "=", self.env.uid), ("name", "ilike", term)],
+            limit=limit,
+        )
+        # Content match — pre-scope to the user's own threads.
+        if len(name_matches) < limit:
+            own_thread_ids = (
+                self.with_context(active_test=False)
+                .search([("user_id", "=", self.env.uid)])
+                .ids
+            )
+            content_thread_ids = []
+            if own_thread_ids:
+                content_thread_ids = (
+                    self.env["mail.message"]
+                    .search(
+                        [
+                            ("model", "=", "llm.thread"),
+                            ("res_id", "in", own_thread_ids),
+                            ("body", "ilike", term),
+                        ]
+                    )
+                    .mapped("res_id")
+                )
+            if content_thread_ids:
+                remaining = limit - len(name_matches)
+                # active_test=False so archived threads found via content match
+                # are returned (search is the main way back to an archived thread).
+                content_matches = self.with_context(active_test=False).search(
+                    [("id", "in", content_thread_ids)],
+                    limit=remaining,
+                )
+                # De-duplicate while preserving order (name matches first).
+                seen = set(name_matches.ids)
+                extras = self.browse()
+                for thread in content_matches:
+                    if thread.id not in seen:
+                        extras |= thread
+                        seen.add(thread.id)
+                name_matches |= extras
+        return name_matches[:limit]._thread_to_store_data()
 
     @api.ondelete(at_uninstall=False)
     def _unlink_llm_thread(self):

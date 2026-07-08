@@ -1,0 +1,103 @@
+// P-UX: LLMSidebar styling — date-bucket headers, per-item hover actions,
+// archived/selected dimming, bulk-tag dialog. Scoped under the container's
+// ``.o-llm-sidebar`` wrapper (the sidebar component renders inside it).
+
+.o-llm-sidebar {
+  // Date-bucket headers (collapsible)
+  .o-llm-bucket-header {
+    user-select: none;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    font-weight: 600;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.03);
+    }
+  }
+
+  .o-llm-thread-item {
+    position: relative;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.04);
+    }
+
+    &.o-llm-thread-active {
+      // The primary background is set by the container SCSS; keep tags legible.
+      .o_tag {
+        --bs-badge-color: rgba(255, 255, 255, 0.95);
+      }
+    }
+
+    &.o-llm-thread-archived {
+      opacity: 0.6;
+      .text-truncate.fw-medium {
+        text-decoration: line-through;
+      }
+    }
+
+    &.o-llm-thread-selected {
+      background-color: rgba(var(--bs-primary-rgb, 7, 103, 228), 0.08);
+    }
+
+    // Per-item actions: reveal on hover (desktop), always visible (mobile).
+    .o-llm-thread-actions {
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      height: 0;
+      overflow: hidden;
+      margin: 0 !important;
+
+      .btn-link:hover {
+        background-color: rgba(0, 0, 0, 0.06);
+      }
+
+      .o-llm-thread-delete:hover {
+        color: var(--bs-danger) !important;
+      }
+    }
+
+    &:hover .o-llm-thread-actions,
+    &.o-llm-thread-archived .o-llm-thread-actions {
+      visibility: visible;
+      opacity: 1;
+      height: auto;
+      margin-top: 0.25rem !important;
+    }
+
+    @media (max-width: 767px) {
+      // Touch: no hover — keep actions reachable.
+      .o-llm-thread-actions {
+        visibility: visible;
+        opacity: 1;
+        height: auto;
+        margin-top: 0.25rem !important;
+      }
+    }
+  }
+
+  // Bulk-action toolbar
+  .o-llm-sidebar-toolbar .btn-link:disabled {
+    opacity: 0.4;
+  }
+}
+
+// Bulk-tag dialog (rendered in a modal, outside .o-llm-sidebar)
+.o_llm_bulk_tag_dialog {
+  .o_tag {
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: box-shadow 0.1s ease, border-color 0.1s ease;
+
+    &:hover {
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    }
+
+    &.o_llm_tag_selected {
+      border-color: var(--bs-primary);
+      box-shadow: 0 0 0 2px rgba(var(--bs-primary-rgb, 7, 103, 228), 0.25);
+    }
+  }
+}

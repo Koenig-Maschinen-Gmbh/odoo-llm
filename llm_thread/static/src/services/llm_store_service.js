@@ -230,7 +230,10 @@ export const llmStoreService = {
           // cannot be used with the chat/completions endpoint").
           const models = await orm.searchRead(
             "llm.model",
-            [["active", "=", true], ["model_use", "in", ["chat", "multimodal"]]],
+            [
+              ["active", "=", true],
+              ["model_use", "in", ["chat", "multimodal"]],
+            ],
             ["id", "name", "provider_id", "default", "model_use"]
           );
 
@@ -550,6 +553,165 @@ export const llmStoreService = {
           }
         } catch (error) {
           console.warn("[llm.store] reloadThreadMessages failed:", error);
+        }
+      },
+
+      // ==================================================================
+      // P-UX: archive / unarchive / delete / bulk actions
+      // ==================================================================
+
+      /**
+       * Re-run ``init_messaging`` so the thread list reflects DB state
+       * (active flag, tags, deletions). Used after bulk operations where
+       * updating each store record in-place would be more code than a reload.
+       */
+      async _reloadThreads() {
+        try {
+          await mailStore.fetchData({ init_messaging: {} });
+        } catch (error) {
+          console.warn("[llm.store] thread reload failed:", error);
+        }
+      },
+
+      _getThread(threadId) {
+        return mailStore.Thread.get({ model: "llm.thread", id: threadId });
+      },
+
+      async archiveThread(threadId) {
+        if (!threadId) {
+          return;
+        }
+        try {
+          await orm.call("llm.thread", "action_archive", [[threadId]]);
+          const thread = this._getThread(threadId);
+          if (thread) {
+            thread.active = false;
+          }
+        } catch (error) {
+          console.warn("[llm.store] archiveThread failed:", error);
+          notification.add(
+            _t("Could not archive the conversation. Please try again."),
+            { type: "danger" }
+          );
+        }
+      },
+
+      async unarchiveThread(threadId) {
+        if (!threadId) {
+          return;
+        }
+        try {
+          await orm.call("llm.thread", "action_unarchive", [[threadId]]);
+          const thread = this._getThread(threadId);
+          if (thread) {
+            thread.active = true;
+          }
+        } catch (error) {
+          console.warn("[llm.store] unarchiveThread failed:", error);
+          notification.add(
+            _t("Could not unarchive the conversation. Please try again."),
+            { type: "danger" }
+          );
+        }
+      },
+
+      async deleteThread(threadId) {
+        if (!threadId) {
+          return;
+        }
+        try {
+          await orm.unlink("llm.thread", [threadId]);
+          const thread = this._getThread(threadId);
+          // Clear the active discuss thread if it was the one deleted, so the
+          // chat area shows the empty state instead of a stale ghost.
+          if (
+            mailStore.discuss?.thread?.model === "llm.thread" &&
+            mailStore.discuss.thread.id === threadId
+          ) {
+            mailStore.discuss.thread = false;
+          }
+          if (thread) {
+            thread.delete();
+          }
+        } catch (error) {
+          console.warn("[llm.store] deleteThread failed:", error);
+          notification.add(
+            _t("Could not delete the conversation. Please try again."),
+            { type: "danger" }
+          );
+        }
+      },
+
+      async bulkArchive(threadIds) {
+        if (!threadIds?.length) {
+          return;
+        }
+        try {
+          await orm.call("llm.thread", "action_archive", [threadIds]);
+          // In-place update for instant feedback; reload guarantees full sync.
+          for (const id of threadIds) {
+            const thread = this._getThread(id);
+            if (thread) {
+              thread.active = false;
+            }
+          }
+        } catch (error) {
+          console.warn("[llm.store] bulkArchive failed:", error);
+          notification.add(
+            _t("Could not archive the selected conversations."),
+            { type: "danger" }
+          );
+        }
+      },
+
+      async bulkDelete(threadIds) {
+        if (!threadIds?.length) {
+          return;
+        }
+        try {
+          await orm.unlink("llm.thread", threadIds);
+          const activeId =
+            mailStore.discuss?.thread?.model === "llm.thread"
+              ? mailStore.discuss.thread.id
+              : null;
+          if (activeId && threadIds.includes(activeId)) {
+            mailStore.discuss.thread = false;
+          }
+          for (const id of threadIds) {
+            const thread = this._getThread(id);
+            if (thread) {
+              thread.delete();
+            }
+          }
+        } catch (error) {
+          console.warn("[llm.store] bulkDelete failed:", error);
+          notification.add(_t("Could not delete the selected conversations."), {
+            type: "danger",
+          });
+        }
+      },
+
+      /**
+       * Append the given tags to every selected thread (existing tags kept).
+       * @param {number[]} threadIds
+       * @param {number[]} tagIds tag ids to append
+       */
+      async bulkTag(threadIds, tagIds) {
+        if (!threadIds?.length || !tagIds?.length) {
+          return;
+        }
+        try {
+          const tagCommands = tagIds.map((tagId) => [4, tagId]);
+          await orm.write("llm.thread", threadIds, { tag_ids: tagCommands });
+          // Reload so each thread's ``tag_ids`` badges reflect the merge
+          // (the write returns no tag-detail dicts to merge in-place).
+          await this._reloadThreads();
+        } catch (error) {
+          console.warn("[llm.store] bulkTag failed:", error);
+          notification.add(
+            _t("Could not apply the tags to the selected conversations."),
+            { type: "danger" }
+          );
         }
       },
 

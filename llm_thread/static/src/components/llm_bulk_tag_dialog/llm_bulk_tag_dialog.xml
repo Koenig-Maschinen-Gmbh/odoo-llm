@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="llm_thread.LLMBulkTagDialog">
+        <div class="o_llm_bulk_tag_dialog">
+            <p class="text-muted small">
+                Apply tags to <t t-out="props.threadIds.length" /> selected
+                conversation(s). Existing tags will be kept.
+            </p>
+            <div
+                t-if="state.tags.length"
+                class="d-flex flex-wrap gap-1 mb-3"
+            >
+                <t t-foreach="state.tags" t-as="tag" t-key="tag.id">
+                    <button
+                        type="button"
+                        t-attf-class="o_tag badge rounded-pill o_tag_color_{{ tag.color or 0 }} {{ state.selected[tag.id] ? 'o_llm_tag_selected border-primary' : '' }}"
+                        t-on-click="() => this.toggleTag(tag.id)"
+                    >
+                        <t t-out="tag.name" />
+                    </button>
+                </t>
+            </div>
+            <div t-if="!state.tags.length" class="text-muted small mb-3">
+                No tags yet — create one below.
+            </div>
+            <div class="d-flex gap-2">
+                <input
+                    type="text"
+                    class="form-control"
+                    placeholder="New tag name…"
+                    t-model="state.newTagName"
+                    t-att-disabled="state.creating"
+                />
+            </div>
+            <div class="o_dialog_footer mt-3 d-flex justify-content-end gap-2">
+                <button
+                    type="button"
+                    class="btn btn-secondary"
+                    t-on-click="onCancel"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    t-on-click="onConfirm"
+                    t-att-disabled="state.creating or (!selectedIds.length and !state.newTagName.trim())"
+                >
+                    Apply
+                </button>
+            </div>
+        </div>
+    </t>
+</templates>

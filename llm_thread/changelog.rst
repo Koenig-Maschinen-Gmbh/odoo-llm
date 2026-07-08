@@ -1,3 +1,47 @@
+18.0.1.12.0 (2026-07-08)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-UX: thread & memory management UX in the chat sidebar.
+  The sidebar (previously a flat, duplicated mobile + desktop list) is now a
+  single ``LLMSidebar`` component with date-bucket grouping
+  (Today / Yesterday / This Week / Older — calendar-day based via luxon
+  ``deserializeDateTime`` + ``startOf("day")``, not a rolling 24h window),
+  client-side name search (instant, accent-insensitive via ``cleanTerm``)
+  plus a debounced server-side message-content search (``llm.thread.
+  search_threads``), colored tag badges, per-item archive/unarchive/delete
+  with confirmation dialogs, a "Show archived" toggle, multi-select bulk
+  archive/delete/tag, and richer thread items (model name + relative date).
+  ``LLMChatContainer`` now delegates the sidebar to one ``<LLMSidebar>``
+  instance per layout (mobile slide-in / desktop collapse).
+* [KOENIG][ADD] ``llm.thread.tag`` model (user-manageable colored tags,
+  ``project.tags`` pattern: ``name_uniq`` constraint, ``name_create`` dedup,
+  ``color`` 0-11). ``tag_ids`` many2many on ``llm.thread`` (auto relation —
+  required for compatibility with the ``llm.thread.mock`` prototype-inheriting
+  transient in ``llm_assistant``; an explicit relation table would collide).
+  Tag form/list/search views + a "Chat Tags" config menu.
+* [KOENIG][ADD] ``_thread_to_store`` now sends ``active`` + ``tag_ids``
+  unconditionally (no stale-store on last-tag-removal / unarchive).
+  ``res.users._init_messaging`` loads BOTH active and archived threads
+  (``active_test=False``) so the "Show archived" toggle is instant (no RPC).
+* [KOENIG][ADD] ``llm.thread.search_threads(search_term)``: owner-scoped
+  search by name or message content (messages are ``mail.message`` rows with
+  ``model='llm.thread'`` + ``res_id``), ``active_test=False`` so archived
+  threads are findable (search is the main way back to an archived thread).
+* [KOENIG][ADD] ACL: users can now unlink ``llm.thread`` (``1,1,1,1`` — was
+  ``1,1,1,0``) so bulk delete + the GDPR "delete my threads" right work; the
+  existing owner-only record rule (``llm_thread_rule_personal``) scopes
+  deletion to own threads. ``llm.thread.tag`` ACL: users read+create
+  (``1,0,1,0``), managers full CRUD (curation of the shared ``name_uniq``
+  namespace).
+* [KOENIG][ADD] Hoot suite for the date-bucket helper
+  (``utils/llm_date_bucket.js`` — pure function, 8 tests incl. the
+  calendar-day-vs-24h boundary, timezone-independent).
+* [KOENIG][ADD] Python tests: ``llm.thread.tag`` model (create, default
+  color, ``name_uniq``, ``name_create`` dedup, thread relation),
+  ``search_threads`` (name + content + archived + owner-scoped + result
+  shape), ``_init_messaging`` archived loading, ACL (user unlinks own /
+  cannot unlink others' / tag create-vs-unlink).
+
 18.0.1.11.1 (2026-07-08)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

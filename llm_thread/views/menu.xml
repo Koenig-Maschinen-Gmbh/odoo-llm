@@ -15,4 +15,11 @@
     parent="llm.menu_llm_config"
     sequence="27"
   />
+    <menuitem
+    id="menu_llm_thread_tag"
+    name="Chat Tags"
+    action="llm_thread_tag_action"
+    parent="llm.menu_llm_config"
+    sequence="28"
+  />
 </odoo>
