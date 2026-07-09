@@ -1,3 +1,38 @@
+18.0.1.12.1 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] P-UX devil's advocate review — 8 fixes across Critical /
+  High / Medium severity:
+* [FIX] §1.4 (Critical): ``search_threads`` now caps the
+  ``mail.message.body`` ilike scan at ``limit=100`` and the own-thread
+  pre-scope at ``limit=500`` — prevents a full-table-scan performance
+  landmine on common search terms.
+* [FIX] §2.1 (Critical): ``llmThreadList`` sort now uses luxon
+  ``deserializeDateTime`` instead of ``new Date(serverString)`` —
+  fixes broken thread ordering on Safari/iOS where the space-separated
+  server datetime parses as ``Invalid Date``.
+* [FIX] §2.8 (High): Mobile routing — ``Thread.open()`` override for
+  ``llm.thread`` navigates to the LLM chat client action on mobile
+  instead of falling through to the backend form view (chat UI was
+  unreachable on mobile).
+* [FIX] §1.3 (High): ``_init_messaging`` now caps thread search at
+  ``limit=200`` — prevents payload bloat for users with hundreds of
+  archived threads.
+* [FIX] §2.2 (Medium): P-UX custom fields (``active``, ``tag_ids``,
+  ``provider_id``, ``model_id``, ``tool_ids``) are now declared as
+  ``Record.attr`` on the Thread model via ``patch(Thread.prototype,
+  setup)`` — enables proper store tracking + incremental updates.
+* [FIX] §2.6 (Medium): Replaced direct store mutations
+  (``Object.assign(thread, ...)``, ``thread.active = false``) with
+  ``mailStore.insert({ "mail.thread": [...] })`` — OCB store update pattern.
+* [FIX] §2.5 (Medium): ``setInterval`` elapsed-timer is now on-demand
+  (``_maybeStartTick`` / ``_maybeStopTick``) — starts only when a run is
+  active, stops when idle, instead of running permanently on every
+  sidebar instance.
+* [FIX] §1.5 (Medium): Bulk delete of >5 threads now requires a
+  two-step confirmation dialog (first "Are you sure?", then "Last
+  chance") to prevent accidental mass deletion.
+
 18.0.1.12.0 (2026-07-08)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

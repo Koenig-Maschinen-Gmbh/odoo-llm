@@ -816,15 +816,19 @@ class LLMThread(models.Model):
             [("user_id", "=", self.env.uid), ("name", "ilike", term)],
             limit=limit,
         )
-        # Content match — pre-scope to the user's own threads.
+        # Content match — pre-scope to the user's own threads (cap at 500
+        # so the IN clause stays bounded for users with many threads).
         if len(name_matches) < limit:
             own_thread_ids = (
                 self.with_context(active_test=False)
-                .search([("user_id", "=", self.env.uid)])
+                .search([("user_id", "=", self.env.uid)], limit=500)
                 .ids
             )
             content_thread_ids = []
             if own_thread_ids:
+                # mail.message.body is an unindexed HTML text column — cap
+                # the scan at 100 matches to avoid a performance landmine on
+                # common search terms ("the", "report", etc.).
                 content_thread_ids = (
                     self.env["mail.message"]
                     .search(
@@ -832,7 +836,8 @@ class LLMThread(models.Model):
                             ("model", "=", "llm.thread"),
                             ("res_id", "in", own_thread_ids),
                             ("body", "ilike", term),
-                        ]
+                        ],
+                        limit=100,
                     )
                     .mapped("res_id")
                 )

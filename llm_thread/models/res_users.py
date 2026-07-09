@@ -15,10 +15,17 @@ class ResUsers(models.Model):
         # current user's own threads — no sudo needed. ``active_test=False``
         # is the only way to include archived rows in an ``active``-field
         # model search.
+        # P-UX review §1.3: limit=200 caps the payload — users with hundreds
+        # of archived threads don't bog down every init_messaging call.
+        # Threads beyond 200 are reachable via search_threads.
         llm_threads = (
             self.env["llm.thread"]
             .with_context(active_test=False)
-            .search([("user_id", "=", self.id)], order="write_date DESC")
+            .search(
+                [("user_id", "=", self.id)],
+                order="write_date DESC",
+                limit=200,
+            )
         )
 
         # Use inherited _thread_to_store method from mail.thread
