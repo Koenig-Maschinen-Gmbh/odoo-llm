@@ -76,8 +76,7 @@
                 <!-- Show thread and composer only if we have an active LLM thread -->
                 <div
           t-if="hasActiveThread"
-          class="d-flex flex-column flex-grow-1 overflow-hidden"
-        >
+          class="d-flex flex-column flex-grow-1 overflow-hidden position-relative">
                     <!-- Thread Header with dropdowns (desktop only) -->
                     <LLMThreadHeader t-if="!isSmall" thread="activeThread" />
 
@@ -97,6 +96,26 @@
             />
                     </div>
 
+                    <!-- P-UX Item 7.1: Jump arrows to skim between user messages -->
+                    <div class="o-llm-jump-arrows position-absolute bottom-0 end-0 p-2 d-flex flex-column gap-1">
+                        <button
+            type="button"
+            class="btn btn-sm btn-light rounded-circle shadow-sm o-llm-jump-up"
+            t-on-click="() => this.jumpToUserMessage('up')"
+            title="Previous user message"
+          >
+                            <i class="fa fa-chevron-up" />
+                        </button>
+                        <button
+            type="button"
+            class="btn btn-sm btn-light rounded-circle shadow-sm o-llm-jump-down"
+            t-on-click="() => this.jumpToUserMessage('down')"
+            title="Next user message"
+          >
+                            <i class="fa fa-chevron-down" />
+                        </button>
+                    </div>
+
                     <!-- Streaming indicator -->
                     <div
             t-if="isStreaming"
@@ -109,7 +128,7 @@
 
                     <!-- Composer area - reuse mail's Composer component -->
                     <div
-            class="o-llm-composer-area border-top p-3 flex-shrink-0"
+            class="o-llm-composer-area border-top px-2 py-1 flex-shrink-0"
           >
                         <Composer
               t-if="threadComposer"
@@ -118,6 +137,11 @@
               sidebar="false"
             />
                     </div>
+                    <!-- P-HUD: subtle stats line under the composer -->
+                    <LLMThreadHud
+              t-if="activeThread"
+              threadId="activeThread.id"
+            />
                 </div>
 
                 <!-- Empty state with create button -->

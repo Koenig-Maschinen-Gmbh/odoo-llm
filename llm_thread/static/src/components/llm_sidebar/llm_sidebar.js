@@ -356,11 +356,18 @@ export class LLMSidebar extends Component {
     // P-CHAT M3 — run-state indicators (moved from LLMChatContainer)
     // ------------------------------------------------------------------
     _hasTimeSensitiveRunState() {
-        const states = Object.values(this.llmStore.threadRunState || {});
         const now = Date.now();
-        const has = states.some(
-            (s) => s.state === "running" || (s.finishedAt && now - s.finishedAt < 3000)
-        );
+        let has = false;
+        // P-UX Item 3: clean up stale terminal states after the 3s flash
+        // window so the tick can stop when no threads are running, and
+        // the threadRunState map doesn't grow unbounded.
+        for (const [tid, s] of Object.entries(this.llmStore.threadRunState || {})) {
+            if (s.state === "running") {
+                has = true;
+            } else if (s.finishedAt && now - s.finishedAt > 3000) {
+                this.llmStore.clearThreadRunState(Number(tid));
+            }
+        }
         // P-UX review §2.5: start the tick on demand when a run is active.
         if (has) {
             this._maybeStartTick();

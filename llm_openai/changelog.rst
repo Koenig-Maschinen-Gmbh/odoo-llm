@@ -1,3 +1,11 @@
+18.0.1.5.0 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``openai_simple_completion()`` — simple text completion
+  using raw OpenAI client (no mail.message formatting). Bypasses the
+  mail.message pipeline entirely for lightweight one-shot calls like
+  title generation.
+
 18.0.1.4.10 (2026-07-07)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

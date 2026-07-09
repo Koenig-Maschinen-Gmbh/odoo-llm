@@ -1,6 +1,7 @@
-// P-UX: LLMSidebar styling — date-bucket headers, per-item hover actions,
-// archived/selected dimming, bulk-tag dialog. Scoped under the container's
-// ``.o-llm-sidebar`` wrapper (the sidebar component renders inside it).
+// P-UX: LLMSidebar styling — compact single-line thread cards, date-bucket
+// headers, archived/selected dimming, bulk-tag dialog. Scoped under the
+// container's ``.o-llm-sidebar`` wrapper (the sidebar component renders
+// inside it).
 
 .o-llm-sidebar {
   // Date-bucket headers (collapsible)
@@ -16,65 +17,25 @@
     }
   }
 
+  // Compact single-line thread cards
   .o-llm-thread-item {
     position: relative;
+    line-height: 1.4;
+    white-space: nowrap;
 
     &:hover {
       background-color: rgba(0, 0, 0, 0.04);
     }
 
-    &.o-llm-thread-active {
-      // The primary background is set by the container SCSS; keep tags legible.
-      .o_tag {
-        --bs-badge-color: rgba(255, 255, 255, 0.95);
-      }
-    }
-
     &.o-llm-thread-archived {
       opacity: 0.6;
-      .text-truncate.fw-medium {
+      .text-truncate {
         text-decoration: line-through;
       }
     }
 
     &.o-llm-thread-selected {
       background-color: rgba(var(--bs-primary-rgb, 7, 103, 228), 0.08);
-    }
-
-    // Per-item actions: reveal on hover (desktop), always visible (mobile).
-    .o-llm-thread-actions {
-      visibility: hidden;
-      opacity: 0;
-      transition: opacity 0.15s ease;
-      height: 0;
-      overflow: hidden;
-      margin: 0 !important;
-
-      .btn-link:hover {
-        background-color: rgba(0, 0, 0, 0.06);
-      }
-
-      .o-llm-thread-delete:hover {
-        color: var(--bs-danger) !important;
-      }
-    }
-
-    &:hover .o-llm-thread-actions,
-    &.o-llm-thread-archived .o-llm-thread-actions {
-      visibility: visible;
-      opacity: 1;
-      height: auto;
-      margin-top: 0.25rem !important;
-    }
-
-    @media (max-width: 767px) {
-      // Touch: no hover — keep actions reachable.
-      .o-llm-thread-actions {
-        visibility: visible;
-        opacity: 1;
-        height: auto;
-        margin-top: 0.25rem !important;
-      }
     }
   }
 

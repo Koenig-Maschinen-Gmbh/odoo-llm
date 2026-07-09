@@ -1,3 +1,73 @@
+18.0.1.13.1 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] P-HUD: infinite RPC loop — `onWillUpdateProps` fired on every
+  parent re-render (not just thread change), causing hundreds of
+  `_get_thread_stats` RPCs per second. Fixed by tracking the last
+  loaded threadId and skipping reloads when it hasn't changed.
+* [FIX] P-HUD: `_get_thread_stats` method signature mismatch — the
+  RPC passed `[[threadId]]` (list) but the method took no args. Fixed
+  to accept a `thread_id` parameter and `browse()` the record.
+* [FIX] SSE `done` event: for orchestration runs, `done` just means
+  the SSE stream is finished (the background job was dispatched), NOT
+  that the AI response is complete. Now tracks orchestration-mode
+  threads and skips the terminal state for them — the bus events
+  (run_done, run_failed) handle the terminal state.
+* [FIX] SSE `orchestration_started` event: now handled (was an unknown
+  type, logged as a warning). Marks the thread as orchestration-mode.
+* [FIX] Auto-rename guard: frontend-generated thread names start with
+  "Chat " (not "New Chat" or "AI Chat -"), so the guard never
+  matched. Added "Chat " to the placeholder pattern check.
+
+18.0.1.13.0 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P-UX Improvements Round 2 — 9 UX improvements for the
+  LLM chat sidebar and message area:
+* [ADD] Item 1: Removed per-card archive/delete buttons from thread
+  items (caused height shift on hover). Archive/delete is now via
+  select-mode toolbar only.
+* [ADD] Item 2: Compact single-line thread cards (name + indicator +
+  time, no model_id or tag badges). Auto-rename: after the first user
+  message, an LLM generates a 3-5 word title via a new
+  ``simple_completion`` provider method (non-streaming, no
+  mail.message overhead). Works for both SSE and background
+  orchestration paths.
+* [FIX] Item 3: Running indicator (spinner + elapsed mm:ss + done/failed
+  flash) now works for SSE streaming too — previously only background
+  orchestration runs set ``threadRunState``. The SSE path now sets
+  running/done/failed states. Stale terminal states are cleaned up
+  after the 3-second flash window.
+* [FIX] Item 4: Streaming content now updates live without F5. Root
+  cause: ``Record.many().push()`` (plain Array method, no reactivity)
+  changed to ``Record.many().add()`` (OCB pattern, triggers re-render).
+  Also added a safety link check in message_chunk/message_update for
+  SSE reconnection scenarios.
+* [ADD] Item 6: Send button now shows ``fa-paper-plane-o`` icon instead
+  of "Send" text for LLM threads. Composer area padding reduced.
+* [ADD] Item 7: Message bubbles — user messages get a blue-tinted
+  bubble, AI answers a grey bubble with border, tool/step messages are
+  muted/smaller, error messages are red-tinted.
+* [ADD] Item 7.1: Jump arrows (up/down) to skim between user messages
+  in long conversations. Floating buttons at bottom-right of chat area.
+* [ADD] Item 5 / P-HUD: Subtle stats display under the composer showing
+  model name, dispatched experts, tokens, € cost for the thread, and
+  month-to-date spend vs budget limit. Data from a single
+  ``_get_thread_stats()`` RPC.
+* [ADD] ``simple_completion()`` method on ``llm.provider`` + ``llm.model``
+  for lightweight one-shot LLM calls (title generation, etc.) without
+  mail.message overhead.
+* [ADD] ``_maybe_generate_name()`` + ``generate_name()`` RPC on
+  ``llm.thread`` — auto-generates a 3-5 word title from the first user
+  message. Guarded: only fires when the name is still a default
+  placeholder and exactly 1 user message exists.
+* [ADD] ``thread_update`` SSE event type — the server yields this after
+  auto-renaming a thread; the client merges it into the mail store.
+* [ADD] GAP-D: ``generate()`` now sets ``llm_thread_id`` context so
+  spend rows are tagged with the originating thread for per-thread
+  cost attribution. The orchestrator sets it to the MAIN thread's ID
+  before calling ``generate()`` on expert sub-threads.
+
 18.0.1.12.2 (2026-07-09)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

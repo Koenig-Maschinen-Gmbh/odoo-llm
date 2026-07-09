@@ -119,6 +119,25 @@ class LLMProvider(models.Model):
             tools=tools,
             prepend_messages=prepend_messages,
             **kwargs,
+)
+
+    def simple_completion(self, prompt, system_prompt=None, model=None):
+        """Simple text completion without mail.message overhead.
+
+        Used for lightweight LLM calls like title generation where creating
+        full mail.message records is unnecessary. Dispatches to the provider's
+        implementation via the standard ``_dispatch`` pattern.
+
+        Args:
+            prompt (str): The user prompt text.
+            system_prompt (str|None): Optional system prompt.
+            model (llm.model|None): Optional specific model to use.
+
+        Returns:
+            str: The generated text (empty string on failure).
+        """
+        return self._dispatch(
+            "simple_completion", prompt, system_prompt=system_prompt, model=model
         )
 
     def _prepare_prepend_messages(self, prepend_messages, tools):

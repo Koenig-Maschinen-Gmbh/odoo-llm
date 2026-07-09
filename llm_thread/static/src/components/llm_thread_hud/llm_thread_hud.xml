@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="llm_thread.LLMThreadHud">
+        <div
+            t-if="hasStats"
+            class="o-llm-hud px-2 py-1 text-muted small border-top d-flex align-items-center gap-3 flex-shrink-0"
+        >
+            <span t-if="state.stats.model_name" class="text-truncate">
+                <i class="fa fa-microchip me-1" />
+                <t t-out="state.stats.model_name" />
+            </span>
+            <span t-if="state.stats.expert_count" class="text-truncate">
+                <i class="fa fa-users me-1" />
+                <t t-out="state.stats.expert_count" /> expert<t t-if="state.stats.expert_count !== 1">s</t>
+            </span>
+            <span t-if="tokensLabel">
+                <i class="fa fa-coins me-1" />
+                <t t-out="tokensLabel" /> tokens
+            </span>
+            <span t-if="costLabel">
+                <i class="fa fa-eur me-1" />
+                <t t-out="costLabel" />
+            </span>
+            <span t-if="monthlyLabel" class="ms-auto">
+                <t t-out="monthlyLabel" /> monthly
+            </span>
+        </div>
+    </t>
+</templates>

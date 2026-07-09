@@ -69,7 +69,7 @@
         t-att-aria-label="SEND_TEXT"
       >
                 <t
-          t-if="thread and thread.model !== 'discuss.channel'"
+          t-if="thread and thread.model !== 'discuss.channel' and !isLLMThread"
           t-out="SEND_TEXT"
         />
                 <t t-else=""><i class="fa fa-fw fa-lg fa-paper-plane-o" /></t>

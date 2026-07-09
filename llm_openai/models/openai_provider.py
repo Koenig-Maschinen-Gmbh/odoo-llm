@@ -232,6 +232,34 @@ class LLMProvider(models.Model):
             return self._openai_process_non_streaming_response(response)
         return self._openai_process_streaming_response(response)
 
+    def openai_simple_completion(self, prompt, system_prompt=None, model=None):
+        """Simple text completion using raw OpenAI client (no mail.message).
+
+        Used for lightweight one-shot completions like title generation.
+        Bypasses the mail.message formatting pipeline entirely — just builds
+        plain ``{role, content}`` dicts and calls the API directly.
+
+        Args:
+            prompt (str): The user prompt text.
+            system_prompt (str|None): Optional system prompt.
+            model (llm.model|None): Optional specific model.
+
+        Returns:
+            str: The generated text content (empty string on failure).
+        """
+        model = self.get_model(model, "chat")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        response = self.client.chat.completions.create(
+            model=model.name,
+            stream=False,
+            messages=messages,
+        )
+        result = self._openai_process_non_streaming_response(response)
+        return result.get("content", "")
+
     def _openai_process_non_streaming_response(self, response):
         """Processes OpenAI non-streamed response and returns ONE standardized dict."""
         _logger.info("Processing non-streaming OpenAI response.")

@@ -121,6 +121,23 @@ export const llmStoreService = {
 
                 this.streamingThreads.add(threadId);
 
+                // P-UX Item 3: also set threadRunState so the sidebar
+                // indicator (elapsed time + done/failed flash) works for
+                // SSE streaming, not just background orchestration runs.
+                this.setThreadRunState(threadId, {
+                    state: "running",
+                    label: "AI is thinking...",
+                    startedAt: Date.now(),
+                    finishedAt: null,
+                    error: false,
+                });
+                // Track whether this stream is an orchestration run. If so,
+                // the SSE ``done`` event just means the stream is finished
+                // (the background job was dispatched) — NOT that the AI
+                // response is complete. The bus events (run_done, run_failed)
+                // set the terminal state for orchestration runs.
+                this._orchestrationThreads = this._orchestrationThreads || new Set();
+                this._orchestrationThreads.delete(threadId);
                 try {
                     let url = `/llm/thread/generate?thread_id=${threadId}`;
                     if (message) {
@@ -141,6 +158,12 @@ export const llmStoreService = {
                     eventSource.onerror = (error) => {
                         console.error("EventSource error:", error);
                         this.stopStreaming(threadId);
+                        // P-UX Item 3: set terminal state for the failed flash.
+                        this.setThreadRunState(threadId, {
+                            state: "failed",
+                            label: "Connection lost",
+                            error: true,
+                        });
                         notification.add(
                             _t(
                                 "Lost connection to AI service. Please try sending your message again."
@@ -153,6 +176,14 @@ export const llmStoreService = {
                 } catch (error) {
                     console.error("Error starting stream:", error);
                     this.stopStreaming(threadId);
+                    // P-UX Item 3: set terminal state so the indicator
+                    // doesn't stay "running" forever if EventSource
+                    // creation fails.
+                    this.setThreadRunState(threadId, {
+                        state: "failed",
+                        label: "Failed to start",
+                        error: true,
+                    });
                     notification.add(
                         _t(
                             "Could not start AI response. Please check your connection and try again."
@@ -180,7 +211,12 @@ export const llmStoreService = {
                         // Get the created message and add it to the thread's messages collection
                         const createdMessage = mailStore.Message.get(data.message.id);
 
-                        // Add message to the correct thread's messages collection (not the active thread)
+                        // P-UX Item 4: use Record.many().add() not .push() —
+                        // .push() is a plain Array method that does NOT trigger
+                        // OWL reactivity. The OCB pattern (mail_core_web_service.js
+                        // line 46: inbox.messages.add(message)) uses .add().
+                        // Without this, new messages don't appear in the Thread
+                        // component until a manual page reload.
                         const createThread = mailStore.Thread.get({
                             model: "llm.thread",
                             id: threadId,
@@ -190,7 +226,7 @@ export const llmStoreService = {
                             createdMessage &&
                             !createThread.messages.some((m) => m.id === createdMessage.id)
                         ) {
-                            createThread.messages.push(createdMessage);
+                            createThread.messages.add(createdMessage);
                         }
                         break;
                     }
@@ -198,14 +234,45 @@ export const llmStoreService = {
                     case "message_chunk":
                     case "message_update":
                         // Update existing message using standard mail.store.insert() like Odoo does
-                        // Use the same pattern as Odoo's standard bus handlers - always use insert
-                        // which will update existing messages or create new ones as needed
                         mailStore.insert({ "mail.message": [data.message] }, { html: true });
+                        // P-UX Item 4: ensure the message is linked to the thread's
+                        // messages collection. If message_create was missed (e.g.
+                        // SSE reconnection), the message won't be in the Thread
+                        // component's reactive view. add() is idempotent if the
+                        // message is already present (guarded by .some() check).
+                        {
+                            const updMsg = mailStore.Message.get(data.message.id);
+                            const updThread = mailStore.Thread.get({
+                                model: "llm.thread",
+                                id: threadId,
+                            });
+                            if (
+                                updThread &&
+                                updMsg &&
+                                !updThread.messages.some((m) => m.id === updMsg.id)
+                            ) {
+                                updThread.messages.add(updMsg);
+                            }
+                        }
+                        break;
+
+                    case "thread_update":
+                        // P-UX Item 2: auto-rename — the server sends a
+                        // thread_update event after auto-generating a title.
+                        // Merge into the store so the sidebar + header update
+                        // reactively.
+                        mailStore.insert({ "mail.thread": [data.thread] });
                         break;
 
                     case "error":
                         console.error("Stream error:", data.error);
                         this.stopStreaming(threadId);
+                        // P-UX Item 3: set terminal state for the failed flash.
+                        this.setThreadRunState(threadId, {
+                            state: "failed",
+                            label: data.error || "Error",
+                            error: true,
+                        });
                         notification.add(data.error || _t("AI response error"), {
                             type: "danger",
                         });
@@ -213,6 +280,27 @@ export const llmStoreService = {
 
                     case "done":
                         this.stopStreaming(threadId);
+                        // P-UX Item 3: set terminal state for the done flash
+                        // — BUT only for direct SSE streaming. For orchestration
+                        // runs, the ``done`` event just means the SSE stream is
+                        // finished (the background job was dispatched). The bus
+                        // events (run_done, run_failed) set the terminal state.
+                        if (!this._orchestrationThreads?.has(threadId)) {
+                            this.setThreadRunState(threadId, {
+                                state: "done",
+                                label: "Done",
+                                error: false,
+                            });
+                        }
+                        break;
+
+                    case "orchestration_started":
+                        // The orchestrator dispatched a background job.
+                        // Mark this thread as orchestration-mode so the
+                        // ``done`` SSE event doesn't set a terminal state
+                        // (the bus events handle that for orchestration runs).
+                        this._orchestrationThreads = this._orchestrationThreads || new Set();
+                        this._orchestrationThreads.add(threadId);
                         break;
 
                     case "tool_called":

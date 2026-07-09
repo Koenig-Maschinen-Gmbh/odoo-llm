@@ -1,3 +1,13 @@
+18.0.1.8.0 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] ``simple_completion()`` method on ``llm.provider`` —
+  dispatches to the provider's implementation via the standard
+  ``_dispatch`` pattern. Used for lightweight one-shot LLM calls
+  (title generation, etc.) without mail.message overhead.
+* [KOENIG][ADD] ``simple_completion()`` proxy on ``llm.model`` —
+  delegates to the provider with ``model=self``.
+
 18.0.1.7.3 (2026-06-26)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

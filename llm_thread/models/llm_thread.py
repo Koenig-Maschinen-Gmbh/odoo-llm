@@ -9,6 +9,7 @@ from psycopg2 import OperationalError
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+from odoo.tools import html2plaintext
 
 _logger = logging.getLogger(__name__)
 
@@ -430,6 +431,13 @@ class LLMThread(models.Model):
             attachment_ids: Optional list of ir.attachment IDs to attach to user message.
         """
         self.ensure_one()
+        # GAP-D: tag spend rows with this thread's ID for per-thread cost
+        # attribution (P-HUD). Don't override if already set (the orchestrator
+        # sets it to the MAIN thread's ID before calling generate() on expert
+        # sub-threads, so all spend rows in an orchestration run aggregate
+        # under the main thread).
+        if not self.env.context.get("llm_thread_id"):
+            self = self.with_context(llm_thread_id=self.id)
 
         with self._generation_lock():
             last_message = False
@@ -458,6 +466,13 @@ class LLMThread(models.Model):
                         return last_message
 
             last_message = yield from self.generate_messages(last_message)
+            # P-UX Item 2: auto-rename thread from first user message.
+            new_name = self._maybe_generate_name()
+            if new_name:
+                yield {
+                    "type": "thread_update",
+                    "thread": {"id": self.id, "model": "llm.thread", "name": new_name},
+                }
             return last_message
 
     def _get_context_messages(self, limit=25):
@@ -792,6 +807,162 @@ class LLMThread(models.Model):
         ``mailStore.insert()``.
         """
         return [self._thread_store_dict(thread) for thread in self]
+
+    def _get_thread_stats(self, thread_id=None):
+        """Return cost/token/expert statistics for the P-HUD display.
+
+        Called via RPC from the LLMThreadHud component. Accepts a thread_id
+        argument (the RPC layer passes it as a positional arg).
+
+        Aggregates ``koenig.ai.spend`` rows tagged with this thread's ID
+        (GAP-D: spend rows are tagged via the ``llm_thread_id`` context).
+        Falls back to 0 if the spend model isn't installed.
+
+        Args:
+            thread_id (int|list|None): The thread ID. May be wrapped in a
+                list by the RPC layer.
+
+        Returns:
+            dict: stats for the P-HUD component.
+        """
+        if thread_id is not None:
+            if isinstance(thread_id, (list, tuple)):
+                thread_id = thread_id[0] if thread_id else None
+            thread = self.browse(thread_id) if thread_id else self
+        else:
+            thread = self
+        thread.ensure_one()
+        Spend = thread.env.get("koenig.ai.spend")
+        tokens = 0
+        cost = 0.0
+        currency = ""
+        monthly_spend = 0.0
+        monthly_budget = 0.0
+        expert_count = 0
+        is_running = False
+
+        if Spend is not None:
+            # Per-thread spend (tagged via GAP-D context).
+            rows = Spend.sudo().search([("thread_id", "=", thread.id)])
+            tokens = sum(r.tokens for r in rows if r.tokens)
+            cost = sum(r.cost for r in rows if r.cost)
+            if rows:
+                currency = rows[0].currency_label or ""
+
+            # Monthly spend for the current user (all providers).
+            period = Spend._current_period()
+            monthly_groups = Spend.sudo().read_group(
+                [("user_id", "=", thread.env.uid), ("period", "=", period)],
+                ["cost:sum"],
+                [],
+            )
+            monthly_spend = (monthly_groups and monthly_groups[0].get("cost")) or 0.0
+
+            # Monthly budget (from the thread's provider).
+            if thread.provider_id and hasattr(
+                thread.provider_id, "koenig_user_monthly_budget"
+            ):
+                monthly_budget = thread.provider_id.koenig_user_monthly_budget or 0.0
+                if not currency and thread.provider_id.koenig_currency:
+                    currency = thread.provider_id.koenig_currency
+
+        # Expert dispatch count (if the orchestrator is installed).
+        RunModel = thread.env.get("koenig.ai.orchestration.run")
+        if RunModel is not None:
+            try:
+                runs = RunModel.sudo().search([("thread_id", "=", thread.id)])
+                expert_count = (
+                    sum(len(r.expert_run_ids) for r in runs) if runs else 0
+                )
+                is_running = bool(
+                    runs.filtered(lambda r: r.state in ("pending", "running"))
+                )
+            except Exception:
+                pass
+
+        return {
+            "model_name": thread.model_id.name if thread.model_id else "",
+            "tokens": tokens,
+            "cost": round(cost, 6),
+            "currency": currency,
+            "monthly_spend": round(monthly_spend, 4),
+            "monthly_budget": monthly_budget,
+            "expert_count": expert_count,
+            "is_running": is_running,
+        }
+
+    def _maybe_generate_name(self):
+        """Auto-generate a concise thread title from the first user message.
+
+        P-UX Item 2: ChatGPT-style auto-rename. After the first user message
+        in a new thread, the LLM generates a 3-5 word title. Only fires when:
+        - The thread has exactly 1 non-error user message (first interaction)
+        - The name is still a default placeholder ("New Chat #\u2026" or "AI Chat -\u2026")
+
+        Uses a non-streaming LLM call via ``simple_completion`` \u2014 lightweight,
+        no mail.message overhead. Failures are logged, never interrupting
+        the generation flow.
+
+        Returns:
+            str|None: The new title if generated, None otherwise.
+        """
+        self.ensure_one()
+        # Guard: only rename if the name is still a default placeholder.
+        # Frontend-generated names: "Chat 7/9/2026, 12:11:31 PM"
+        # Backend-generated names: "New Chat #123", "AI Chat - ..."
+        if not (
+            self.name.startswith("New Chat")
+            or self.name.startswith("AI Chat -")
+            or self.name.startswith("Chat ")
+        ):
+            return None
+        # Only if exactly 1 non-error user message exists (first interaction).
+        user_msgs = self.env["mail.message"].search(
+            [
+                ("model", "=", self._name),
+                ("res_id", "=", self.id),
+                ("llm_role", "=", "user"),
+                ("is_error", "=", False),
+            ],
+        )
+        if len(user_msgs) != 1:
+            return None
+        body_text = html2plaintext(user_msgs[0].body or "")[:500]
+        if not body_text.strip():
+            return None
+        try:
+            title = self.sudo().model_id.simple_completion(
+                prompt=f"Generate a concise 3-5 word title for this conversation:\n\n{body_text}",
+                system_prompt=(
+                    "You are a title generator. Generate a concise 3-5 word "
+                    "title that summarizes the user's question or request. "
+                    "Respond with ONLY the title, no quotes, no explanations, "
+                    "no trailing punctuation."
+                ),
+            )
+            if title:
+                title = title.strip().strip("\"'").strip()
+                if title and 3 <= len(title) <= 100:
+                    self.sudo().write({"name": title})
+                    return title
+        except Exception as e:
+            _logger.warning(
+                "Failed to auto-generate thread name for thread %s: %s",
+                self.id,
+                e,
+            )
+        return None
+
+    def generate_name(self):
+        """Public RPC entry point for auto-generating a thread title.
+
+        Called by the frontend after a thread's first message if the SSE
+        path didn't yield a ``thread_update`` event (e.g., background
+        orchestration runs).
+        """
+        for thread in self:
+            thread._maybe_generate_name()
+        return True
 
     @api.model
     def search_threads(self, search_term, limit=50):

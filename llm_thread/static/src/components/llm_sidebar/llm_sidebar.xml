@@ -176,7 +176,7 @@
                                 t-key="thread.id"
                             >
                                 <div
-                                    class="o-llm-thread-item p-3 border-bottom cursor-pointer"
+                                    class="o-llm-thread-item px-2 py-1 border-bottom cursor-pointer"
                                     t-att-class="{
                                         'o-llm-thread-active': thread.id === activeThread?.id,
                                         'o-llm-thread-archived': thread.active === false,
@@ -185,114 +185,45 @@
                                     t-on-click="() => this.selectThread(thread.id)"
                                     t-att-title="thread.name"
                                 >
-                                    <div class="d-flex align-items-start">
+                                    <div class="d-flex align-items-center gap-1">
                                         <input
                                             t-if="state.selectMode"
                                             type="checkbox"
-                                            class="form-check-input me-2 mt-1 flex-shrink-0"
+                                            class="form-check-input flex-shrink-0"
                                             t-att-checked="!!state.selectedThreadIds[thread.id]"
                                             t-on-click.stop="() => this.toggleSelectThread(thread.id)"
                                         />
-                                        <div class="flex-grow-1 min-width-0">
-                                            <div
-                                                class="text-truncate fw-medium"
-                                                t-out="thread.name"
-                                            />
-                                            <div class="text-muted small mt-1 d-flex align-items-center gap-2">
-                                                <span
-                                                    t-if="thread.model_id"
-                                                    class="text-truncate"
-                                                    t-out="thread.model_id.name"
-                                                />
-                                                <span
-                                                    t-if="thread.write_date"
-                                                    t-out="formatDate(thread.write_date)"
-                                                />
-                                            </div>
-                                            <!-- Tag badges -->
-                                            <div
-                                                t-if="thread.tag_ids and thread.tag_ids.length"
-                                                class="d-flex flex-wrap gap-1 mt-1"
-                                            >
-                                                <t
-                                                    t-foreach="thread.tag_ids"
-                                                    t-as="tag"
-                                                    t-key="tag.id"
-                                                >
-                                                    <span
-                                                        t-attf-class="o_tag badge rounded-pill o_tag_color_{{ tag.color or 0 }}"
-                                                        t-out="tag.name"
-                                                    />
-                                                </t>
-                                            </div>
-                                        </div>
-                                        <div
-                                            class="ms-2 flex-shrink-0 text-muted small d-flex align-items-center"
-                                        >
-                                            <!-- P-CHAT M3: live run feedback -->
+                                        <span class="text-truncate flex-grow-1" t-out="thread.name" />
+                                        <span class="flex-shrink-0 text-muted small d-flex align-items-center gap-1">
+                                            <!-- P-CHAT M3: live run feedback (compact inline) -->
                                             <t t-if="threadElapsedLabel(thread.id)">
-                                                <i
-                                                    class="fa fa-circle-o-notch fa-spin text-primary me-1"
-                                                    aria-hidden="true"
-                                                />
+                                                <i class="fa fa-circle-o-notch fa-spin text-primary" />
                                                 <t t-out="threadElapsedLabel(thread.id)" />
                                             </t>
                                             <i
                                                 t-elif="threadFinishedFlash(thread.id) === 'done'"
                                                 class="fa fa-check-circle text-success"
                                                 title="Done"
-                                                aria-hidden="true"
                                             />
                                             <i
                                                 t-elif="threadFinishedFlash(thread.id) === 'failed'"
                                                 class="fa fa-exclamation-circle text-danger"
                                                 title="Failed"
-                                                aria-hidden="true"
                                             />
                                             <i
                                                 t-elif="threadFinishedFlash(thread.id) === 'cancelled'"
                                                 class="fa fa-ban text-muted"
                                                 title="Cancelled"
-                                                aria-hidden="true"
                                             />
                                             <i
                                                 t-elif="isStreamingThread(thread.id)"
                                                 class="fa fa-circle-o-notch fa-spin text-primary"
-                                                aria-hidden="true"
                                             />
-                                        </div>
-                                    </div>
-                                    <!-- Per-item actions (hover) -->
-                                    <div
-                                        class="o-llm-thread-actions d-flex gap-1 mt-1"
-                                        t-if="!state.selectMode"
-                                    >
-                                        <button
-                                            t-if="thread.active !== false"
-                                            type="button"
-                                            class="btn btn-sm btn-link px-1 py-0 text-muted"
-                                            t-on-click.stop.prevent="() => this.archiveThread(thread)"
-                                            title="Archive"
-                                        >
-                                            <i class="fa fa-archive" />
-                                        </button>
-                                        <button
-                                            t-if="thread.active === false"
-                                            type="button"
-                                            class="btn btn-sm btn-link px-1 py-0 text-muted"
-                                            t-on-click.stop.prevent="() => this.unarchiveThread(thread)"
-                                            title="Unarchive"
-                                        >
-                                            <i class="fa fa-undo" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="btn btn-sm btn-link px-1 py-0 text-muted o-llm-thread-delete"
-                                            t-on-click.stop.prevent="() => this.deleteThread(thread)"
-                                            title="Delete"
-                                        >
-                                            <i class="fa fa-trash-o" />
-                                        </button>
+                                            <span
+                                                t-if="thread.write_date"
+                                                t-out="formatDate(thread.write_date)"
+                                            />
+                                        </span>
                                     </div>
                                 </div>
                             </t>

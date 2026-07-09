@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.12.2",
+    "version": "18.0.1.13.1",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -71,6 +71,10 @@ Contact: support@apexive.com
             "llm_thread/static/src/components/llm_sidebar/llm_sidebar.js",
             "llm_thread/static/src/components/llm_sidebar/llm_sidebar.xml",
             "llm_thread/static/src/components/llm_sidebar/llm_sidebar.scss",
+            # P-HUD: subtle stats display under the composer
+            "llm_thread/static/src/components/llm_thread_hud/llm_thread_hud.js",
+            "llm_thread/static/src/components/llm_thread_hud/llm_thread_hud.xml",
+            "llm_thread/static/src/components/llm_thread_hud/llm_thread_hud.scss",
             # P-UX: bulk-tag picker dialog
             "llm_thread/static/src/components/llm_bulk_tag_dialog/llm_bulk_tag_dialog.js",
             "llm_thread/static/src/components/llm_bulk_tag_dialog/llm_bulk_tag_dialog.xml",
