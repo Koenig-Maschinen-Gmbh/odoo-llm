@@ -1,3 +1,11 @@
+18.0.1.12.2 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] P-UX template crash: ``llm_sidebar.xml`` used
+  ``Boolean(state.selectedThreadIds[thread.id])`` in a ``t-att-checked``
+  expression — ``Boolean`` is not in the QWeb expression scope (compiles to
+  ``ctx['Boolean']`` = undefined). Fixed to ``!!state.selectedThreadIds[thread.id]``.
+
 18.0.1.12.1 (2026-07-09)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -190,7 +190,7 @@
                                             t-if="state.selectMode"
                                             type="checkbox"
                                             class="form-check-input me-2 mt-1 flex-shrink-0"
-                                            t-att-checked="Boolean(state.selectedThreadIds[thread.id])"
+                                            t-att-checked="!!state.selectedThreadIds[thread.id]"
                                             t-on-click.stop="() => this.toggleSelectThread(thread.id)"
                                         />
                                         <div class="flex-grow-1 min-width-0">
