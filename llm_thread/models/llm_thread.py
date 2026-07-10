@@ -808,7 +808,7 @@ class LLMThread(models.Model):
         """
         return [self._thread_store_dict(thread) for thread in self]
 
-    def _get_thread_stats(self, thread_id=None):
+    def get_thread_stats(self, thread_id=None):
         """Return cost/token/expert statistics for the P-HUD display.
 
         Called via RPC from the LLMThreadHud component. Accepts a thread_id
@@ -817,6 +817,10 @@ class LLMThread(models.Model):
         Aggregates ``koenig.ai.spend`` rows tagged with this thread's ID
         (GAP-D: spend rows are tagged via the ``llm_thread_id`` context).
         Falls back to 0 if the spend model isn't installed.
+
+        Public (no leading underscore) so it can be called remotely — Odoo 18's
+        ``get_public_method`` rejects ``_``-prefixed methods from RPC with
+        ``AccessError: Private methods ... cannot be called remotely``.
 
         Args:
             thread_id (int|list|None): The thread ID. May be wrapped in a

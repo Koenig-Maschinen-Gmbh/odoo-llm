@@ -96,8 +96,11 @@
             />
                     </div>
 
-                    <!-- P-UX Item 7.1: Jump arrows to skim between user messages -->
-                    <div class="o-llm-jump-arrows position-absolute bottom-0 end-0 p-2 d-flex flex-column gap-1">
+                    <!-- P-UX Item 7.1: Jump arrows to skim between user messages.
+                         Position is set in llm_chat_container.scss (.o-llm-jump-arrows
+                         bottom/right) so the arrows float above the composer + P-HUD
+                         and clear the scrollbar, instead of overlapping them. -->
+                    <div class="o-llm-jump-arrows position-absolute p-2 d-flex flex-column gap-1">
                         <button
             type="button"
             class="btn btn-sm btn-light rounded-circle shadow-sm o-llm-jump-up"

@@ -156,7 +156,7 @@
                 >
                     <div class="o-llm-bucket">
                         <div
-                            class="o-llm-bucket-header d-flex align-items-center justify-content-between px-3 py-1 text-muted small cursor-pointer"
+                            class="o-llm-bucket-header d-flex align-items-center justify-content-between cursor-pointer"
                             t-on-click="() => this.toggleBucket(bucket.key)"
                         >
                             <span class="text-truncate">
@@ -176,7 +176,7 @@
                                 t-key="thread.id"
                             >
                                 <div
-                                    class="o-llm-thread-item px-2 py-1 border-bottom cursor-pointer"
+                                    class="o-llm-thread-item cursor-pointer"
                                     t-att-class="{
                                         'o-llm-thread-active': thread.id === activeThread?.id,
                                         'o-llm-thread-archived': thread.active === false,

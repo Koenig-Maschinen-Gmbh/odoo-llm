@@ -614,13 +614,21 @@ export const llmStoreService = {
             },
 
             /**
-             * Re-fetch the thread's messages so new messages (e.g. the assistant
-             * answer posted by a background orchestration run) appear without a
-             * manual page reload. Uses the OCB Thread model's ``fetchMessages()``
-             * — the canonical message-reload path (thread_model.js line 679). The
-             * previous implementation called ``mailStore.fetchData({ init_messaging:
-             * {} })`` which refreshes the thread LIST but does NOT re-fetch the
-             * specific thread's messages → the new answer stayed invisible.
+             * Re-fetch the thread's NEW messages so the assistant answer posted
+             * by a background orchestration run appears without a manual reload.
+             *
+             * Uses the OCB Thread model's ``fetchNewMessages()`` — NOT
+             * ``fetchMessages()``. The difference is the reactivity fix for
+             * "answer only appears after clicking away and back": ``fetchMessages``
+             * inserts records into the store but does NOT splice them into
+             * ``thread.messages``, so the Thread component (which renders
+             * ``thread.nonEmptyMessages``) never re-renders. ``fetchNewMessages``
+             * (thread_model.js) explicitly ``this.messages.splice(start, 0, ...new)``
+             * the newly-fetched messages into the reactive collection → the
+             * component re-renders and the answer shows up live. This is the
+             * same call OCB's Thread component makes on its
+             * ``onWillUpdateProps`` (i.e. when the user navigates away and back),
+             * which is why that workaround always showed the answer.
              */
             async reloadThreadMessages(threadId) {
                 if (!threadId) {
@@ -632,7 +640,7 @@ export const llmStoreService = {
                         id: threadId,
                     });
                     if (thread) {
-                        await thread.fetchMessages();
+                        await thread.fetchNewMessages();
                     }
                 } catch (error) {
                     console.warn("[llm.store] reloadThreadMessages failed:", error);

@@ -9,8 +9,14 @@
   }
 
   // P-UX Item 7.1 — floating jump arrows for skimming user messages.
+  // Anchored above the composer + P-HUD (so they don't overlap the send
+  // button) and offset from the right edge (so they don't sit on the
+  // thread area's scrollbar). The composer is ~58px + P-HUD ~24px, so
+  // ~88px clears both with a small margin.
   .o-llm-jump-arrows {
     z-index: 10;
+    bottom: 88px;
+    right: 22px;
 
     .btn {
       width: 32px;

@@ -4,24 +4,50 @@
 // inside it).
 
 .o-llm-sidebar {
-  // Date-bucket headers (collapsible)
+  // BL-17 — date-bucket headers as visually-weighted, sticky section landmarks.
+  // A thread sidebar is a navigation list: the section header must dominate the
+  // items below it so the eye snaps to "you are in the Today group" when
+  // scanning. Subtle background tint + bottom divider + bolder/letter-spaced
+  // type give it weight; `position: sticky` keeps the current group's header
+  // visible while the list scrolls (ChatGPT/Claude pattern). The header text
+  // color is a shade darker than Bootstrap's `text-muted` so it has contrast
+  // against the white background instead of blending into the items.
   .o-llm-bucket-header {
     user-select: none;
     text-transform: uppercase;
     font-size: 0.7rem;
-    letter-spacing: 0.03em;
-    font-weight: 600;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    color: #495057;
+    padding: 0.5rem 0.75rem;
+    background-color: rgba(0, 0, 0, 0.035);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    position: sticky;
+    top: 0;
+    z-index: 2;
 
     &:hover {
-      background-color: rgba(0, 0, 0, 0.03);
+      background-color: rgba(0, 0, 0, 0.06);
+    }
+
+    // Keep the count badge calm (it's secondary metadata).
+    .badge {
+      font-weight: 500;
     }
   }
 
-  // Compact single-line thread cards
+  // BL-17 — breathing room between buckets so groups read as distinct sections.
+  .o-llm-bucket + .o-llm-bucket {
+    margin-top: 0.5rem;
+  }
+
+  // BL-17 — compact single-line thread cards with calm separation.
   .o-llm-thread-item {
     position: relative;
-    line-height: 1.4;
+    line-height: 1.45;
     white-space: nowrap;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 
     &:hover {
       background-color: rgba(0, 0, 0, 0.04);

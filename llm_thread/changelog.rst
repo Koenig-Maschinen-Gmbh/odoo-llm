@@ -1,3 +1,53 @@
+18.0.1.13.4 (2026-07-10)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] Sidebar date-bucket headers (Today/Yesterday/This week/Older)
+  are now visually-weighted section landmarks instead of blending into
+  the thread items: subtle background tint + bottom divider + bolder,
+  letter-spaced type in a darker grey for contrast, and ``position:
+  sticky`` so the current group's header stays visible while the list
+  scrolls (ChatGPT/Claude pattern). Thread items get more breathing
+  room (padding + line-height) and a lighter hairline separator, and
+  buckets get a small gap between them so the groups read as distinct
+  sections. (BL-17 — the 18.0.1.13.2 padding bump was insufficient;
+  the headers needed visual weight, not just padding.)
+
+18.0.1.13.3 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Live streaming (orchestration path): ``reloadThreadMessages``
+  now calls ``thread.fetchNewMessages()`` instead of
+  ``thread.fetchMessages()``. ``fetchMessages`` inserts records into
+  the store but does NOT splice them into ``thread.messages``, so the
+  Thread component never re-rendered — the assistant answer posted by
+  a background orchestration run only appeared after navigating away
+  and back (which calls ``fetchNewMessages`` via the Thread
+  component's ``onWillUpdateProps``). ``fetchNewMessages`` splices the
+  new messages into the reactive collection → the answer shows up live
+  (combined with the ``koenig_ai_orchestrator`` polling-reconcile that
+  triggers the reload when the ``run_done`` bus event is missed).
+
+18.0.1.13.2 (2026-07-09)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] P-HUD: ``_get_thread_stats`` renamed to ``get_thread_stats``
+  (public) — Odoo 18's ``get_public_method`` rejects ``_``-prefixed
+  methods from RPC with ``AccessError: Private methods ... cannot be
+  called remotely``, which silently hid the whole HUD (the catch set
+  stats=null → hasStats=false → not rendered). The HUD now renders
+  whenever stats are loaded (always shows at least the model name;
+  tokens/cost/monthly show when non-zero).
+* [FIX] Jump arrows: repositioned from ``bottom-0 end-0`` (overlapped
+  the send button + the thread-area scrollbar) to float above the
+  composer + P-HUD, offset from the right edge.
+* [FIX] Cramped layout: date-bucket headers + thread items padding
+  ``py-1`` → ``py-2``; message bubbles get ``margin-bottom`` for
+  vertical breathing room.
+* [FIX] Thinking/tool messages: the streaming "Thinking…" placeholder
+  is now muted + italic with no bubble (was styled like a finished
+  answer); step (tool / intermediate-assistant) content is lighter
+  grey + smaller, to distinguish from the final answer + user question.
+
 18.0.1.13.1 (2026-07-09)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

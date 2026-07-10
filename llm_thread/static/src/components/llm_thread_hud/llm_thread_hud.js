@@ -48,7 +48,12 @@ export class LLMThreadHud extends Component {
         this._lastLoadedThreadId = threadId;
         this.state.loading = true;
         try {
-            const stats = await this.orm.call("llm.thread", "_get_thread_stats", [threadId]);
+            // Public method (no leading underscore): Odoo 18's
+            // ``get_public_method`` rejects ``_``-prefixed methods from RPC
+            // with ``AccessError: Private methods ... cannot be called
+            // remotely`` — that silently hid the whole HUD (the catch set
+            // stats=null → hasStats=false → not rendered).
+            const stats = await this.orm.call("llm.thread", "get_thread_stats", [threadId]);
             if (status(this) === "destroyed") {
                 return;
             }
@@ -70,9 +75,15 @@ export class LLMThreadHud extends Component {
         }
     }
 
+    /**
+     * The HUD renders whenever stats have loaded (non-null). It always shows
+     * at least the model name; tokens/cost/monthly spans show only when their
+     * value is non-zero (see the *Label getters + template t-if). This keeps
+     * the HUD visible on every thread (so the user sees the stats bar) instead
+     * of hiding entirely when a thread has no spend yet.
+     */
     get hasStats() {
-        const s = this.state.stats;
-        return s && (s.tokens > 0 || s.cost > 0 || s.expert_count > 0 || s.monthly_budget > 0);
+        return Boolean(this.state.stats);
     }
 
     get costLabel() {
