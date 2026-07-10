@@ -96,24 +96,26 @@
             />
                     </div>
 
-                    <!-- P-UX Item 7.1: Jump arrows to skim between user messages.
-                         Position is set in llm_chat_container.scss (.o-llm-jump-arrows
-                         bottom/right) so the arrows float above the composer + P-HUD
-                         and clear the scrollbar, instead of overlapping them. -->
+                    <!-- P-UX Item 7.1: Jump arrows to skim between the main
+                         messages (user requests + AI final answers), jumping
+                         OVER the in-between thinking/tool steps. Position is
+                         set in llm_chat_container.scss (.o-llm-jump-arrows
+                         bottom/right) so the arrows float above the composer
+                         + P-HUD and clear the scrollbar. -->
                     <div class="o-llm-jump-arrows position-absolute p-2 d-flex flex-column gap-1">
                         <button
             type="button"
             class="btn btn-sm btn-light rounded-circle shadow-sm o-llm-jump-up"
-            t-on-click="() => this.jumpToUserMessage('up')"
-            title="Previous user message"
+            t-on-click="() => this.jumpToMainMessage('up')"
+            title="Previous message (user / AI answer)"
           >
                             <i class="fa fa-chevron-up" />
                         </button>
                         <button
             type="button"
             class="btn btn-sm btn-light rounded-circle shadow-sm o-llm-jump-down"
-            t-on-click="() => this.jumpToUserMessage('down')"
-            title="Next user message"
+            t-on-click="() => this.jumpToMainMessage('down')"
+            title="Next message (user / AI answer)"
           >
                             <i class="fa fa-chevron-down" />
                         </button>

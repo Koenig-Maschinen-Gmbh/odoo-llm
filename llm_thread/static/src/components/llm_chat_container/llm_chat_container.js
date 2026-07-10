@@ -134,33 +134,42 @@ export class LLMChatContainer extends Component {
     }
 
     /**
-     * P-UX Item 7.1: Jump to the previous/next user message in the chat.
-     * Scrolls smoothly to the next .o-llm-message-user element in the given
-     * direction. Used by the floating jump arrows.
+     * P-UX Item 7.1: Jump to the previous/next "main" message in the chat —
+     * a user request OR an AI final answer — skipping the in-between
+     * thinking/tool-step messages (`.o-llm-step`), which can be long in
+     * agentic threads. Used by the floating jump arrows.
+     *
+     * The combined set (user messages + final answers) is queried in document
+     * order, so "up" lands on the previous main message and "down" on the
+     * next one relative to the current scroll position.
      * @param {'up'|'down'} direction - 'up' for previous, 'down' for next
      */
-    jumpToUserMessage(direction) {
+    jumpToMainMessage(direction) {
         const container = this.threadScrollableRef?.el;
         if (!container) {
             return;
         }
-        const userMessages = container.querySelectorAll(".o-llm-message-user");
-        if (!userMessages.length) {
+        // User requests + AI final answers (NOT the muted step/thinking
+        // messages — those are the noise this tool lets you jump over).
+        const mainMessages = container.querySelectorAll(
+            ".o-llm-message-user, .o-llm-final-answer"
+        );
+        if (!mainMessages.length) {
             return;
         }
         const containerRect = container.getBoundingClientRect();
         const threshold = containerRect.top + 50;
         let target = null;
         if (direction === "up") {
-            for (let i = userMessages.length - 1; i >= 0; i--) {
-                const rect = userMessages[i].getBoundingClientRect();
+            for (let i = mainMessages.length - 1; i >= 0; i--) {
+                const rect = mainMessages[i].getBoundingClientRect();
                 if (rect.top < threshold) {
-                    target = userMessages[i];
+                    target = mainMessages[i];
                     break;
                 }
             }
         } else {
-            for (const msg of userMessages) {
+            for (const msg of mainMessages) {
                 const rect = msg.getBoundingClientRect();
                 if (rect.top > threshold) {
                     target = msg;

@@ -1,3 +1,13 @@
+18.0.1.13.6 (2026-07-10)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Jump arrows now hop between **all user messages AND AI final
+  answers** (``.o-llm-message-user, .o-llm-final-answer``), skipping the
+  in-between thinking/tool-step messages — so they're a real "skim past
+  the Thinking noise" tool. Previously they only targeted user messages,
+  so the arrows skipped every AI answer. Button titles updated to
+  "Previous/Next message (user / AI answer)".
+
 18.0.1.13.5 (2026-07-10)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
