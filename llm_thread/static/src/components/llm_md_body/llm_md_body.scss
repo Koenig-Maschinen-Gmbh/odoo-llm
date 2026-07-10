@@ -3,8 +3,17 @@
 // (tool/step) messages. The classes are added by message_patch.js on the
 // Message component root (o-llm-message-user, o-llm-message-assistant, etc.).
 .o-llm-message {
-    // P-UX Issue 2 — breathing room between message bubbles.
-    margin-bottom: 0.5rem;
+    // P-UX Issue 2 — breathing room between message bubbles (inter-message
+    // gap) + a little more space between the author/timestamp header and
+    // the message body/bubble.
+    margin-bottom: 1rem;
+
+    // Header (author + timestamp, e.g. "glm-5.2 … Today at 6:28 AM") →
+    // body spacing. The OCB header carries `mb-1` (0.25rem); this adds a
+    // touch more so the bubble doesn't sit tight under the header line.
+    .o-mail-Message-contentContainer {
+        margin-top: 0.5rem;
+    }
 
     // User messages — subtle blue-tinted bubble, right-leaning.
     &.o-llm-message-user .o-mail-Message-content {

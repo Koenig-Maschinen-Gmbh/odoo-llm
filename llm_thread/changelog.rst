@@ -1,3 +1,12 @@
+18.0.1.13.5 (2026-07-10)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] Message spacing: a little more room between the author/timestamp
+  header line (e.g. "glm-5.2 … Today at 6:28 AM") and the message
+  body/bubble (``.o-mail-Message-contentContainer`` margin-top), and a
+  bit more vertical separation between consecutive messages
+  (``.o-llm-message`` margin-bottom 0.5rem → 1rem).
+
 18.0.1.13.4 (2026-07-10)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
