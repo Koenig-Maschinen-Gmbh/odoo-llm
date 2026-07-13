@@ -212,3 +212,178 @@ class TestGenerateMessagesCancelHook(TransactionCase):
         except StopIteration as exc:
             returned = exc.value
         self.assertEqual(returned, asst_msg)
+
+
+@tagged("post_install", "-at_install")
+class TestCheckLoopControlStreamingContract(TransactionCase):
+    """Contract tests for the mode-aware between-chunks check (Phase 3)."""
+
+    def test_no_hook_returns_false(self):
+        thread = self.env["llm.thread"]
+        self.assertFalse(thread._check_loop_control_streaming(None))
+        self.assertFalse(thread._check_loop_control_streaming(False))
+
+    def test_falsy_return_returns_false(self):
+        self.assertFalse(
+            self.env["llm.thread"]._check_loop_control_streaming(lambda: None)
+        )
+
+    def test_cancel_false_returns_false(self):
+        self.assertFalse(
+            self.env["llm.thread"]._check_loop_control_streaming(
+                lambda: {"cancel": False}
+            )
+        )
+
+    def test_cancel_true_no_mode_returns_true(self):
+        """No ``mode`` key = ``immediate`` (the Phase 2 default)."""
+        self.assertTrue(
+            self.env["llm.thread"]._check_loop_control_streaming(
+                lambda: {"cancel": True}
+            )
+        )
+
+    def test_cancel_true_immediate_returns_true(self):
+        self.assertTrue(
+            self.env["llm.thread"]._check_loop_control_streaming(
+                lambda: {"cancel": True, "mode": "immediate"}
+            )
+        )
+
+    def test_cancel_true_after_turn_returns_false(self):
+        """``after_turn`` defers the between-chunks cancel — the stream
+        finishes, and the cancel is caught at the next tool-call or
+        while-iteration boundary."""
+        self.assertFalse(
+            self.env["llm.thread"]._check_loop_control_streaming(
+                lambda: {"cancel": True, "mode": "after_turn"}
+            )
+        )
+
+    def test_cancel_false_after_turn_returns_false(self):
+        """Even with ``after_turn`` mode, ``cancel=False`` means keep going."""
+        self.assertFalse(
+            self.env["llm.thread"]._check_loop_control_streaming(
+                lambda: {"cancel": False, "mode": "after_turn"}
+            )
+        )
+
+
+@tagged("post_install", "-at_install")
+class TestStreamingCancelMode(TransactionCase):
+    """The between-chunks check is mode-aware (Phase 3).
+
+    ``after_turn``: the stream finishes — no ``GenerationCancelled`` between
+    chunks. ``immediate`` (or no mode): the check raises between chunks (the
+    Phase 2 behaviour, now gated on the mode).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.provider = (
+            cls.env["llm.provider"]
+            .sudo()
+            .create(
+                {
+                    "name": "Cancel-mode Test Provider",
+                    "service": "openai",
+                    "api_base": "https://test.example.com/v1",
+                    "api_key": "sk-test-key",
+                }
+            )
+        )
+        cls.model = (
+            cls.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "cancel-mode-test-model",
+                    "provider_id": cls.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        cls.thread = (
+            cls.env["llm.thread"]
+            .sudo()
+            .create(
+                {
+                    "name": "Cancel-mode test thread",
+                    "provider_id": cls.provider.id,
+                    "model_id": cls.model.id,
+                }
+            )
+        )
+
+    def test_after_turn_mode_defers_between_chunks(self):
+        """In ``after_turn`` mode the between-chunks check does NOT raise —
+        all stream chunks are processed. The cancel is deferred to the next
+        tool-call or while-iteration boundary (tested at the orchestrator
+        level, where the full ``_execute_run`` flow is exercised)."""
+        check = Mock(
+            side_effect=[{"cancel": True, "mode": "after_turn"}] * 10,
+        )
+        stream = [{"content": "Hello"}, {"content": " world"}]
+        with patch.object(
+            type(self.env["mail.message"]),
+            "to_store_format",
+            return_value={},
+        ):
+            gen = self.thread._handle_streaming_response(
+                stream,
+                loop_control_check=check,
+            )
+            # The generator must complete without raising.
+            list(gen)
+        # The hook was called for each chunk — none of them raised.
+        self.assertGreaterEqual(check.call_count, 2)
+        # The full accumulated content was written (both chunks processed).
+        msgs = (
+            self.env["mail.message"]
+            .sudo()
+            .search(
+                [("model", "=", "llm.thread"), ("res_id", "=", self.thread.id)],
+            )
+        )
+        asst = msgs.filtered(lambda m: "Hello" in (m.body or ""))
+        self.assertTrue(asst, "the assistant message must exist")
+        self.assertIn("world", asst.body or "")
+
+    def test_immediate_mode_raises_between_chunks(self):
+        """In ``immediate`` mode the between-chunks check raises
+        ``GenerationCancelled`` — the stream is interrupted after the first
+        chunk (the Phase 2 behaviour, now gated on the mode)."""
+        check = Mock(
+            side_effect=[{"cancel": False}, {"cancel": True, "mode": "immediate"}]
+        )
+        stream = [{"content": "Hello"}, {"content": " world"}]
+        with patch.object(
+            type(self.env["mail.message"]),
+            "to_store_format",
+            return_value={},
+        ):
+            gen = self.thread._handle_streaming_response(
+                stream,
+                loop_control_check=check,
+            )
+            cancelled = False
+            try:
+                list(gen)
+            except GenerationCancelled:
+                cancelled = True
+        self.assertTrue(
+            cancelled,
+            "immediate mode must raise GenerationCancelled between chunks",
+        )
+        # Only the first chunk was processed — the second was NOT appended.
+        msgs = (
+            self.env["mail.message"]
+            .sudo()
+            .search(
+                [("model", "=", "llm.thread"), ("res_id", "=", self.thread.id)],
+            )
+        )
+        asst = msgs.filtered(lambda m: "Hello" in (m.body or ""))
+        self.assertTrue(asst, "the first chunk must have been processed")
+        self.assertNotIn("world", asst.body or "")

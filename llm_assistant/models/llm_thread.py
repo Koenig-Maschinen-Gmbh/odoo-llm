@@ -32,7 +32,7 @@ from odoo.tools import html2plaintext
 _logger = logging.getLogger(__name__)
 
 
-class GenerationCancelled(Exception):
+class GenerationCancelled(BaseException):
     """Raised by the loop-control hook to abort ``generate_messages`` cooperatively.
 
     A caller passes an optional ``loop_control_check`` callable to
@@ -42,6 +42,17 @@ class GenerationCancelled(Exception):
     to mark the run cancelled and post the terminal bus event. Pure control-flow
     signal — the cancel flag is already persisted on the task row by the canceler
     before this fires, so the exception carries no payload.
+
+    Inherits from :class:`BaseException` (not :class:`Exception`) so it
+    propagates through all ``except Exception as e:`` blocks in the tool
+    execution pipeline (``_generate_assistant_response``, ``_execute_tool_call``,
+    ``mail_message.execute_tool_call``).  This is the Python convention for
+    control-flow signals — the same hierarchy as :class:`KeyboardInterrupt`,
+    :class:`SystemExit`, and :class:`GeneratorExit`.  Without this, the
+    between-chunks cancel check in ``_handle_streaming_response`` is silently
+    swallowed by ``_generate_assistant_response``'s error handler, and the
+    expert's cancel signal is swallowed by ``_execute_tool_call``'s error
+    handler — the cancel never reaches the orchestrator.
     """
 
 
@@ -417,20 +428,50 @@ class LLMThread(models.Model):
         return last_message
 
     def _check_loop_control(self, loop_control_check):
-        """Invoke the loop-control hook; return True when the loop must abort.
+        """Invoke the loop-control hook; return ``True`` when the loop must abort.
 
         ``loop_control_check`` is an optional callable returning a dict with a
-        ``cancel`` boolean (``{"cancel": True}``). A falsy/missing hook, a falsy
-        return, or a dict without a truthy ``cancel`` all mean "keep going". The
-        hook is invoked synchronously at each check site in
-        :meth:`generate_messages`; an exception raised by the hook propagates —
-        the discipline of not silently swallowing a failed poll into a no-cancel
-        lives in the caller's check, not here.
+        ``cancel`` boolean (``{"cancel": True}``) and, optionally, a ``mode``
+        string (``"after_turn"`` or ``"immediate"``). A falsy/missing hook, a
+        falsy return, or a dict without a truthy ``cancel`` all mean "keep
+        going". The hook is invoked synchronously at each non-streaming check
+        site in :meth:`generate_messages` (before each ``while`` iteration and
+        before each tool-call execution); an exception raised by the hook
+        propagates — the discipline of not silently swallowing a failed poll
+        into a no-cancel lives in the caller's check, not here.
+
+        This method always returns the cancel flag regardless of ``mode`` — it
+        is used at boundaries where raising is always correct (a new turn is
+        about to start / a new tool call is about to execute). For the
+        between-stream-chunks site (where ``after_turn`` mode must defer), use
+        :meth:`_check_loop_control_streaming` instead.
         """
         if not loop_control_check:
             return False
         result = loop_control_check() or {}
         return bool(result.get("cancel"))
+
+    def _check_loop_control_streaming(self, loop_control_check):
+        """Mode-aware between-chunks cancel check (Phase 3).
+
+        In ``after_turn`` mode (the default for user cancels), do NOT raise
+        between stream chunks — let the LLM response finish so the in-flight
+        tool call's savepoint commits or rolls back cleanly. The cancel is
+        caught at the next tool-call boundary (before
+        :meth:`_execute_tool_call`) or at the next ``while`` iteration
+        boundary (before :meth:`_generate_assistant_response`).
+
+        In ``immediate`` mode (or when no ``mode`` key is present), raise at
+        all check sites — the current Phase 2 behaviour, reserved for hard
+        kills (zombie reclaim).
+
+        Returns ``True`` when the between-chunks check should raise
+        :class:`GenerationCancelled`.
+        """
+        if not loop_control_check:
+            return False
+        result = loop_control_check() or {}
+        return bool(result.get("cancel")) and result.get("mode") != "after_turn"
 
     def _generate_response(self, last_message):
         raise NotImplementedError
@@ -691,13 +732,22 @@ class LLMThread(models.Model):
         return False
 
     def _handle_streaming_response(self, stream_response, *, loop_control_check=None):
-        """Handle streaming response from LLM provider with tool call processing."""
+        """Handle streaming response from LLM provider with tool call processing.
+
+        The between-chunks cancel check is **mode-aware** (Phase 3): in
+        ``after_turn`` mode the check does NOT raise between chunks — the LLM
+        response is allowed to finish so the in-flight tool call's savepoint
+        commits or rolls back cleanly. The cancel is then caught at the next
+        tool-call boundary or ``while`` iteration boundary. In ``immediate``
+        mode (or when no ``mode`` is returned), the check raises at every
+        chunk boundary (the Phase 2 behaviour, reserved for hard kills).
+        """
         message = None
         accumulated_content = ""
         collected_tool_calls = []
 
         for chunk in stream_response:
-            if self._check_loop_control(loop_control_check):
+            if self._check_loop_control_streaming(loop_control_check):
                 raise GenerationCancelled(
                     _("Generation cancelled by loop-control hook."),
                 )

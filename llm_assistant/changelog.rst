@@ -1,3 +1,36 @@
+18.0.1.7.2 (2026-07-13)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] Mode-aware between-chunks cancel check (Phase 3). The
+  ``loop_control_check`` callable can now return a ``mode`` key
+  (``"after_turn"`` or ``"immediate"``) alongside the ``cancel`` boolean.
+  In ``after_turn`` mode (the default for user cancels), the between-chunks
+  check in ``_handle_streaming_response`` does NOT raise — the LLM response
+  is allowed to finish so the in-flight tool call's savepoint commits or
+  rolls back cleanly. The cancel is caught at the next tool-call boundary
+  (``_check_loop_control`` always raises on cancel regardless of mode). In
+  ``immediate`` mode (or when no ``mode`` is returned), the between-chunks
+  check raises at every chunk boundary (the Phase 2 behaviour, reserved for
+  hard kills / zombie reclaim). New method ``_check_loop_control_streaming``
+  encapsulates the mode-aware logic; ``_check_loop_control`` (used at
+  non-streaming boundaries) is unchanged — it always raises on cancel.
+  Backward compatible: callers that return ``{"cancel": bool}`` without a
+  ``mode`` get the Phase 2 behaviour (immediate).
+
+18.0.1.7.1 (2026-07-13)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] ``GenerationCancelled`` now inherits from ``BaseException`` (not
+  ``Exception``) so it propagates through all ``except Exception as e:`` blocks
+  in the tool execution pipeline. Previously, the between-chunks cancel check in
+  ``_handle_streaming_response`` was silently swallowed by
+  ``_generate_assistant_response``'s error handler (line 478), and the
+  expert's cancel signal was swallowed by ``_execute_tool_call``'s error
+  handler (line 810) and ``mail_message.execute_tool_call``'s error handler
+  (line 159). With ``BaseException``, the cancel signal propagates through all
+  three swallow points — matching the Python convention for control-flow
+  signals (``KeyboardInterrupt``, ``SystemExit``, ``GeneratorExit``).
+
 18.0.1.7.0 (2026-07-13)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
