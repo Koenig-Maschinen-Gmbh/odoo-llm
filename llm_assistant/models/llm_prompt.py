@@ -140,10 +140,26 @@ class LLMPrompt(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         prompts = super().create(vals_list)
+        # Auto-detect arguments from the template on create, but only when the
+        # caller did NOT supply a non-empty arguments_json. An explicit schema
+        # is preserved so ``undefined_arguments`` can flag template vars the
+        # author chose not to define (see test_undefined_arguments_detection).
+        for prompt in prompts:
+            try:
+                already_defined = bool(json.loads(prompt.arguments_json or "{}"))
+            except json.JSONDecodeError:
+                already_defined = False
+            if not already_defined:
+                prompt._ensure_arguments_sync()
         return prompts
 
     def write(self, vals):
         result = super().write(vals)
+        # Keep the arguments schema in sync when the template changes: newly
+        # introduced vars are added; explicitly-defined ones are left untouched.
+        if "template" in vals:
+            for prompt in self:
+                prompt._ensure_arguments_sync()
         return result
 
     def copy(self, default=None):

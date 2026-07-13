@@ -1,3 +1,26 @@
+18.0.1.7.0 (2026-07-13)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] Cooperative loop-control hook for ``generate_messages``. An optional
+  ``loop_control_check`` callable (returning ``{"cancel": bool}``) is consulted
+  at three sites — before each ``while`` iteration, before each tool-call
+  execution, and between stream chunks in ``_handle_streaming_response`` — and
+  raises the new ``GenerationCancelled`` exception as soon as it reports a
+  cancel. ``_generate_assistant_response`` gained the same keyword argument so
+  the hook threads through to the streaming path. Pure addition: with no hook
+  (or a hook that never cancels) the loop is byte-for-byte the previous
+  behaviour. This lets a caller bound cancellation to one tool/LLM-call
+  granularity even when a single ``next(gen)`` step blocks inside a long tool
+  call or stream — a between-``next(gen)`` poll alone cannot interrupt that.
+* [FIX] ``llm.prompt`` now auto-detects arguments from the template on create
+  (when no explicit ``arguments_json`` is supplied) and on template write, via
+  ``_ensure_arguments_sync``. The ``create``/``write`` overrides were previously
+  no-ops, so the arguments schema stayed empty and ``argument_count`` /
+  ``input_schema_json`` computed from ``{}`` — the auto-detection the tests pin
+  was never wired in. An explicit ``arguments_json`` is still preserved on
+  create so ``undefined_arguments`` can flag template vars the author chose not
+  to define.
+
 18.0.1.6.3 (2026-07-13)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

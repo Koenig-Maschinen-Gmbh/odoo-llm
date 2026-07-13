@@ -32,6 +32,19 @@ from odoo.tools import html2plaintext
 _logger = logging.getLogger(__name__)
 
 
+class GenerationCancelled(Exception):
+    """Raised by the loop-control hook to abort ``generate_messages`` cooperatively.
+
+    A caller passes an optional ``loop_control_check`` callable to
+    :meth:`generate_messages`; when it returns ``{"cancel": True}`` the loop
+    raises this exception at the next check site (loop iteration, before a tool
+    call, between stream chunks). The orchestrator's ``finally`` block catches it
+    to mark the run cancelled and post the terminal bus event. Pure control-flow
+    signal — the cancel flag is already persisted on the task row by the canceler
+    before this fires, so the exception carries no payload.
+    """
+
+
 _FOLD_PROMPT_TEMPLATE = """\
 You are merging new conversation content into an existing summary.
 
@@ -297,8 +310,20 @@ class LLMThread(models.Model):
 
         return messages
 
-    def generate_messages(self, last_message):
-        """Generate messages with actual AI intelligence."""
+    def generate_messages(self, last_message, *, loop_control_check=None):
+        """Generate messages with actual AI intelligence.
+
+        ``loop_control_check`` is an optional callable returning a dict with a
+        ``cancel`` boolean (``{"cancel": True}``). When provided, the loop
+        consults it at three cooperative check sites — before each ``while``
+        iteration, before each tool-call execution, and between stream chunks
+        — and raises :class:`GenerationCancelled` as soon as it reports a
+        cancel. This bounds cancellation to one tool/LLM-call granularity even
+        when a single ``next(gen)`` step blocks inside a long tool call or
+        stream (a between-``next(gen)`` poll alone cannot interrupt that).
+        Pure addition: with no hook (or a hook that never cancels) the loop is
+        byte-for-byte the previous behaviour.
+        """
         self.ensure_one()
 
         # Get last message if not provided
@@ -347,6 +372,10 @@ class LLMThread(models.Model):
 
         # Continue generation loop
         while self._should_continue(last_message):
+            if self._check_loop_control(loop_control_check):
+                raise GenerationCancelled(
+                    _("Generation cancelled by loop-control hook."),
+                )
             if last_message.llm_role in ("user", "tool"):
                 if self.model_id.model_use in ("image_generation", "generation"):
                     last_message = yield from self._generate_response(last_message)
@@ -354,6 +383,7 @@ class LLMThread(models.Model):
                     # Nudge toward a final answer once the soft cap is hit.
                     last_message = yield from self._generate_assistant_response(
                         final_answer=tool_rounds >= max_tool_rounds,
+                        loop_control_check=loop_control_check,
                     )
             elif last_message.llm_role == "assistant" and last_message.has_tool_calls():
                 if tool_rounds >= hard_cap:
@@ -367,6 +397,10 @@ class LLMThread(models.Model):
                 # Execute ALL tool calls from assistant message
                 tool_calls = last_message.get_tool_calls()
                 for tool_call in tool_calls:
+                    if self._check_loop_control(loop_control_check):
+                        raise GenerationCancelled(
+                            _("Generation cancelled by loop-control hook."),
+                        )
                     tool_message = yield from self._execute_tool_call(
                         tool_call,
                         last_message,
@@ -382,10 +416,28 @@ class LLMThread(models.Model):
 
         return last_message
 
+    def _check_loop_control(self, loop_control_check):
+        """Invoke the loop-control hook; return True when the loop must abort.
+
+        ``loop_control_check`` is an optional callable returning a dict with a
+        ``cancel`` boolean (``{"cancel": True}``). A falsy/missing hook, a falsy
+        return, or a dict without a truthy ``cancel`` all mean "keep going". The
+        hook is invoked synchronously at each check site in
+        :meth:`generate_messages`; an exception raised by the hook propagates —
+        the discipline of not silently swallowing a failed poll into a no-cancel
+        lives in the caller's check, not here.
+        """
+        if not loop_control_check:
+            return False
+        result = loop_control_check() or {}
+        return bool(result.get("cancel"))
+
     def _generate_response(self, last_message):
         raise NotImplementedError
 
-    def _generate_assistant_response(self, final_answer=False):
+    def _generate_assistant_response(
+        self, final_answer=False, *, loop_control_check=None
+    ):
         """Generate assistant response and handle tool calls.
 
         Catches LLM API errors and posts them as error messages in the thread
@@ -415,6 +467,7 @@ class LLMThread(models.Model):
                 stream_response = self.sudo().model_id.chat(**chat_kwargs)
                 assistant_message = yield from self._handle_streaming_response(
                     stream_response,
+                    loop_control_check=loop_control_check,
                 )
             else:
                 # Handle non-streaming response
@@ -637,13 +690,17 @@ class LLMThread(models.Model):
 
         return False
 
-    def _handle_streaming_response(self, stream_response):
+    def _handle_streaming_response(self, stream_response, *, loop_control_check=None):
         """Handle streaming response from LLM provider with tool call processing."""
         message = None
         accumulated_content = ""
         collected_tool_calls = []
 
         for chunk in stream_response:
+            if self._check_loop_control(loop_control_check):
+                raise GenerationCancelled(
+                    _("Generation cancelled by loop-control hook."),
+                )
             # Initialize message on first content
             if message is None and chunk.get("content"):
                 message = self.message_post(
