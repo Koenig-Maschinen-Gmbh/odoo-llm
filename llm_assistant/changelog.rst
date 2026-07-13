@@ -1,3 +1,10 @@
+18.0.1.6.3 (2026-07-13)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Manifest ``description`` simplified to a plain-text paragraph (removed
+  the too-short RST title underline) so Odoo no longer emits a Docutils "Title
+  underline too short" warning at module load.
+
 18.0.1.6.2 (2026-07-06)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
