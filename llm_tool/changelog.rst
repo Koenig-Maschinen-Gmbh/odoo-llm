@@ -1,3 +1,21 @@
+18.0.4.1.5 (2026-07-14)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] ``get_unexecuted_tool_calls()`` on ``mail.message`` — double-execution
+  guard for the release-and-resume HITL pattern (Phase 4a). Filters out tool
+  calls that already have a completed/error tool message on the thread,
+  preventing accidental re-execution when the loop re-enters with an
+  assistant message whose tool calls have already been processed (e.g.,
+  structured resume after approval injection).
+* [ADD] ``post_tool_result()`` on ``mail.message`` — posts a synthetic tool
+  message with a real result (``status="completed"`` or ``"error"``),
+  bypassing the normal ``post_tool_call`` → ``execute_tool_call`` flow.
+  Used by the orchestrator's approval handler (Phase 4b) to inject the real
+  write result after a human approves a paused tool call. The injected
+  message is linked to the assistant message's tool call via
+  ``tool_call_id`` — the validator sees the tool_call+result pair and keeps
+  both, so the LLM sees the complete correct sequence and can chain naturally.
+
 18.0.4.1.4 (2026-07-02)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

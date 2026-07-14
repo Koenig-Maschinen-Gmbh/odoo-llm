@@ -24,6 +24,97 @@ class MailMessage(models.Model):
         self.ensure_one()
         return bool(self.get_tool_calls())
 
+    def get_unexecuted_tool_calls(self):
+        """Get tool calls that don't have a completed/error tool message yet.
+
+        Double-execution guard (Phase 4a): filters out tool calls that
+        already have a result (a tool message with status ``completed`` or
+        ``error``). Prevents accidental re-execution when the loop re-enters
+        with an assistant message whose tool calls have already been
+        processed (e.g., structured resume after approval injection).
+        """
+        self.ensure_one()
+        all_tool_calls = self.get_tool_calls()
+        if not all_tool_calls:
+            return []
+
+        tool_msgs = self.env["mail.message"].search(
+            [
+                ("model", "=", self.model),
+                ("res_id", "=", self.res_id),
+                ("llm_role", "=", "tool"),
+                ("body_json", "!=", False),
+            ]
+        )
+
+        completed_call_ids = set()
+        for msg in tool_msgs:
+            tool_data = msg.get_tool_data()
+            if tool_data and tool_data.get("status") in ("completed", "error"):
+                call_id = tool_data.get("tool_call_id")
+                if call_id:
+                    completed_call_ids.add(call_id)
+
+        return [tc for tc in all_tool_calls if tc.get("id") not in completed_call_ids]
+
+    def post_tool_result(
+        self,
+        tool_call_id,
+        result,
+        status="completed",
+        tool_call=None,
+        thread_model=None,
+    ):
+        """Post a synthetic tool result message (HITL approval injection).
+
+        Creates a tool message with the given result and status, bypassing
+        the normal ``post_tool_call`` → ``execute_tool_call`` flow. Used by
+        the orchestrator's approval handler (Phase 4b) to inject the real
+        write result after a human approves a paused tool call.
+
+        Args:
+            tool_call_id (str): The tool call ID from the assistant message.
+            result (any): The tool execution result.
+            status (str): ``"completed"`` (default) or ``"error"``.
+            tool_call (dict, optional): The full tool_call dict for audit.
+            thread_model (recordset, optional): The thread model to post on.
+
+        Returns:
+            mail.message: The created tool message.
+        """
+        fn = (tool_call or {}).get("function", {})
+        tool_name = fn.get("name", "unknown_tool")
+        tool_data = {
+            "type": "tool_execution",
+            "tool_call_id": tool_call_id,
+            "tool_call": tool_call
+            or {
+                "id": tool_call_id,
+                "function": {"name": tool_name},
+            },
+            "status": status,
+            "tool_name": tool_name,
+            "result": result,
+        }
+
+        if thread_model:
+            return thread_model.message_post(
+                body=f"Tool result: {tool_name}",
+                body_json=tool_data,
+                llm_role="tool",
+                author_id=False,
+            )
+        return self.env["mail.message"].create(
+            {
+                "model": self.model,
+                "res_id": self.res_id,
+                "body_json": tool_data,
+                "subtype_xmlid": "llm.mt_tool",
+                "author_id": False,
+                "body": f"Tool result: {tool_name}",
+            }
+        )
+
     def post_tool_call(self, tool_call, thread_model=None):
         """Create a tool message from tool call data.
 

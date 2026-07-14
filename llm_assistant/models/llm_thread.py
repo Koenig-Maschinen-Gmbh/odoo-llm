@@ -56,6 +56,32 @@ class GenerationCancelled(BaseException):
     """
 
 
+class GenerationPaused(BaseException):
+    """Raised by the loop-control hook to pause ``generate_messages`` before a
+    write-tool executes (human-in-the-loop approval, Phase 4a).
+
+    A caller's ``loop_control_check`` callable returns ``{"pause": True}`` when
+    the upcoming tool call is a write-tool that needs human approval. The loop
+    raises this exception at the per-tool-call boundary — BEFORE
+    ``post_tool_call`` / ``execute_tool_call`` — so no tool side-effect occurs.
+    The orchestrator catches it, marks the run ``paused``, posts a
+    ``run_paused`` bus event, and releases the worker (the generator ends
+    gracefully; the ``queue.job`` completes). On approval, the real result is
+    injected as a tool message via :meth:`post_tool_result`, and the run is
+    re-enqueued — ``generate_messages(last_message=None)`` re-reads the
+    injected tool result and the LLM chains naturally. On rejection, the
+    rejection reason is injected instead.
+
+    Inherits from :class:`BaseException` (not :class:`Exception`) for the same
+    reason as :class:`GenerationCancelled`: the tool execution pipeline has
+    ``except Exception as e:`` blocks in ``_generate_assistant_response``,
+    ``_execute_tool_call``, and ``mail_message.execute_tool_call`` that would
+    otherwise swallow the pause signal. Like cancel, pause is a control-flow
+    signal — the assistant message with ``tool_calls`` is already committed to
+    the DB before this fires, so the exception carries no payload.
+    """
+
+
 _FOLD_PROMPT_TEMPLATE = """\
 You are merging new conversation content into an existing summary.
 
@@ -405,12 +431,30 @@ class LLMThread(models.Model):
                     )
                     break
                 tool_rounds += 1
-                # Execute ALL tool calls from assistant message
-                tool_calls = last_message.get_tool_calls()
+                # Double-execution guard (Phase 4a): filter out tool calls
+                # that already have a completed/error tool message. Prevents
+                # accidental re-execution on structured resume (the tool
+                # result was injected before re-entering the loop).
+                tool_calls = last_message.get_unexecuted_tool_calls()
+                if not tool_calls:
+                    _logger.info(
+                        "Thread %s: all tool calls already have results; "
+                        "breaking to avoid re-execution.",
+                        self.id,
+                    )
+                    break
                 for tool_call in tool_calls:
-                    if self._check_loop_control(loop_control_check):
+                    control = self._check_loop_control_tool(
+                        loop_control_check,
+                        tool_call,
+                    )
+                    if control.get("cancel"):
                         raise GenerationCancelled(
                             _("Generation cancelled by loop-control hook."),
+                        )
+                    if control.get("pause"):
+                        raise GenerationPaused(
+                            _("Generation paused for tool approval."),
                         )
                     tool_message = yield from self._execute_tool_call(
                         tool_call,
@@ -472,6 +516,22 @@ class LLMThread(models.Model):
             return False
         result = loop_control_check() or {}
         return bool(result.get("cancel")) and result.get("mode") != "after_turn"
+
+    def _check_loop_control_tool(self, loop_control_check, tool_call):
+        """Per-tool-call control check: cancel OR pause (Phase 4a).
+
+        Calls the hook with the ``tool_call`` so the hook can decide whether
+        to pause for approval (write-tools). Returns the full result dict so
+        the caller can check both ``cancel`` and ``pause`` keys.
+
+        At non-tool-call boundaries (top of ``while`` loop, between stream
+        chunks), use :meth:`_check_loop_control` /
+        :meth:`_check_loop_control_streaming` instead — those don't pass the
+        ``tool_call`` and check only for cancel.
+        """
+        if not loop_control_check:
+            return {}
+        return loop_control_check(tool_call) or {}
 
     def _generate_response(self, last_message):
         raise NotImplementedError

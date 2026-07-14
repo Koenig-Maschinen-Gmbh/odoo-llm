@@ -1,3 +1,44 @@
+18.0.1.7.3 (2026-07-14)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] Release-and-resume HITL pause mechanism (Phase 4a — Iteration 2).
+  Four fork-level additions (all additive, no behaviour change without the
+  hook) that enable human-in-the-loop write-tool approval via the
+  release-and-resume-with-structured-injection pattern (OpenAI ``RunState``,
+  LangGraph ``interrupt()``, Pydantic AI deferred tools):
+
+  1. ``GenerationPaused(BaseException)`` — parallel to
+     ``GenerationCancelled``; raised at the per-tool-call boundary when the
+     loop-control hook returns ``{"pause": True}`` for a write-tool.
+     Inherits ``BaseException`` so ``except Exception:`` blocks in the tool
+     execution pipeline don't swallow it.
+
+  2. ``_check_loop_control_tool`` method — calls the ``loop_control_check``
+     hook with the ``tool_call`` dict so the hook can decide whether the
+     upcoming tool is a write-tool that needs approval. Returns the full
+     result dict so the caller can check both ``cancel`` and ``pause``.
+     Used at the per-tool-call boundary only; ``_check_loop_control``
+     (top of while loop) and ``_check_loop_control_streaming`` (between
+     chunks) are unchanged.
+
+  3. ``post_tool_result`` on ``mail.message`` — posts a synthetic tool
+     message with a real result (``status="completed"`` or ``"error"``),
+     bypassing the normal ``post_tool_call`` → ``execute_tool_call`` flow.
+     Used by the orchestrator's approval handler (Phase 4b) to inject the
+     real write result after a human approves a paused tool call.
+
+  4. ``get_unexecuted_tool_calls`` on ``mail.message`` — double-execution
+     guard: filters out tool calls that already have a completed/error tool
+     message on the thread. Prevents accidental re-execution on structured
+     resume (the tool result was injected before re-entering the loop, so
+     the assistant message's tool calls should NOT be re-executed).
+
+* [ADD] ``generate_messages`` now uses ``get_unexecuted_tool_calls()`` instead
+  of ``get_tool_calls()`` in the tool-execution branch, and adds a combined
+  cancel+pause check via ``_check_loop_control_tool`` at the per-tool-call
+  boundary. If all tool calls already have results (structured resume edge
+  case), the loop breaks with an info log to avoid an infinite loop.
+
 18.0.1.7.2 (2026-07-13)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
