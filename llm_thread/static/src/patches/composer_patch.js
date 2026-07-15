@@ -111,6 +111,17 @@ patch(Composer.prototype, {
         if (this.isLLMThread && this.llmStore) {
             const threadId = this.props.composer.thread.id;
             this.llmStore.stopStreaming(threadId);
+            // Also cancel any active background orchestration run — the
+            // ``stopStreaming`` method only closes the SSE stream, but for
+            // orchestration runs the real work happens in a background queue
+            // job. ``stopOrchestration`` fires ``action_cancel_active_run``
+            // which stops the background job. The method is added by
+            // ``koenig_ai_orchestrator``'s ``llm_store_stop_patch.js``; if
+            // that addon is not installed, the method won't exist and we
+            // skip it gracefully.
+            if (typeof this.llmStore.stopOrchestration === "function") {
+                this.llmStore.stopOrchestration(threadId);
+            }
         }
     },
 

@@ -1,3 +1,13 @@
+18.0.1.13.7 (2026-07-15)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Composer ``stopStreaming()`` now also calls
+  ``llmStore.stopOrchestration(threadId)`` (if it exists — added by
+  ``koenig_ai_orchestrator``) so the stop button cancels background
+  orchestration runs, not just closes the SSE stream. Guarded with
+  ``typeof === "function"`` so it's a no-op when the orchestrator
+  addon is not installed.
+
 18.0.1.13.6 (2026-07-10)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
