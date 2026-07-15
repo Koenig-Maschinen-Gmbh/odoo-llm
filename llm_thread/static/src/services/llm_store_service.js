@@ -723,6 +723,11 @@ export const llmStoreService = {
                     if (thread) {
                         thread.delete();
                     }
+                    // Clean up the threadRunState entry so the sidebar
+                    // doesn't keep a stale state for a deleted thread
+                    // (Phase 7: terminal states are no longer cleared
+                    // by the tick, so this is the cleanup path).
+                    this.clearThreadRunState(threadId);
                 } catch (error) {
                     console.warn("[llm.store] deleteThread failed:", error);
                     notification.add(_t("Could not delete the conversation. Please try again."), {

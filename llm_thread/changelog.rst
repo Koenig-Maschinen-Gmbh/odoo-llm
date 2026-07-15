@@ -1,3 +1,31 @@
+18.0.1.13.9 (2026-07-15)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] ``deleteThread`` now calls ``clearThreadRunState(threadId)``
+  after unlinking the thread. Previously, the ``threadRunState`` entry
+  persisted as a memory leak (the Phase 7 tick fix stopped clearing
+  terminal states via the tick, so ``deleteThread`` is the cleanup
+  path). The map is still bounded by thread count, but now shrinks
+  when threads are deleted.
+
+18.0.1.13.8 (2026-07-15)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Sidebar run-state indicators (check/exclamation/ban icons) no
+  longer vanish when clicking a thread. Root cause: the on-demand tick
+  stopped after 1 second (no running threads found), leaving stale flash
+  icons in the DOM until a manual re-render (e.g. clicking a thread)
+  evaluated ``threadFinishedFlash`` → null and removed them. Fix: the
+  tick now stays running while there are terminal states still within
+  the 3-second flash window (``has = true`` for ``finishedAt <= 3s``),
+  and increments ``elapsedTick`` one final time before stopping —
+  triggering a re-render that removes the stale icon. Terminal states
+  are also no longer deleted from ``threadRunState`` (previously
+  ``clearThreadRunState`` was called after 3s), which prevents the
+  bus-service poll from re-setting them every 10s — the feedback loop
+  that caused indicators to flash on and off. The map grows at most one
+  entry per thread (bounded by thread count).
+
 18.0.1.13.7 (2026-07-15)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -88,16 +88,22 @@ export class LLMSidebar extends Component {
     // ------------------------------------------------------------------
     _maybeStartTick() {
         if (this._elapsedTimer) {
-            return;
-        }
-        this._elapsedTimer = setInterval(() => {
-            if (this._hasTimeSensitiveRunState()) {
-                this.state.elapsedTick++;
-            } else {
-                this._maybeStopTick();
+                return;
             }
-        }, 1000);
-    }
+            this._elapsedTimer = setInterval(() => {
+                if (this._hasTimeSensitiveRunState()) {
+                    this.state.elapsedTick++;
+                } else {
+                    // Final re-render to remove stale flash icons before
+                    // stopping the tick. Without this, the last render (while
+                    // the flash was still active) leaves a stale icon in the
+                    // DOM — the tick stops without triggering the re-render
+                    // that would evaluate threadFinishedFlash → null.
+                    this.state.elapsedTick++;
+                    this._maybeStopTick();
+                }
+            }, 1000);
+        }
 
     _maybeStopTick() {
         if (this._elapsedTimer) {
@@ -358,14 +364,28 @@ export class LLMSidebar extends Component {
     _hasTimeSensitiveRunState() {
         const now = Date.now();
         let has = false;
-        // P-UX Item 3: clean up stale terminal states after the 3s flash
-        // window so the tick can stop when no threads are running, and
-        // the threadRunState map doesn't grow unbounded.
-        for (const [tid, s] of Object.entries(this.llmStore.threadRunState || {})) {
+        // Keep the tick running while there are running threads OR terminal
+        // states still within the 3-second flash window. Previously, the tick
+        // stopped as soon as no running threads were found — but terminal
+        // states set by the bus event / poll within the last 3s still need
+        // the tick to drive elapsedTick so the component re-renders and the
+        // flash icon disappears after the window expires. Without this, stale
+        // check/exclamation icons stay in the DOM until a manual re-render
+        // (e.g. clicking a thread) — the "indicators vanish on thread switch"
+        // bug.
+        //
+        // Terminal states are NOT cleared from threadRunState (previously they
+        // were deleted via clearThreadRunState after 3s). Keeping them lets
+        // the bus service poll skip them (the poll's terminal-state guard
+        // checks getThreadRunState), preventing a feedback loop where the
+        // poll re-sets a terminal state every 10s → a new 3s flash → cleared
+        // by tick → re-set by poll → ... The map grows at most one entry per
+        // thread (keyed by threadId), which is bounded by the thread count.
+        for (const s of Object.values(this.llmStore.threadRunState || {})) {
             if (s.state === "running") {
                 has = true;
-            } else if (s.finishedAt && now - s.finishedAt > 3000) {
-                this.llmStore.clearThreadRunState(Number(tid));
+            } else if (s.finishedAt && now - s.finishedAt <= 3000) {
+                has = true; // Still within flash window — keep ticking
             }
         }
         // P-UX review §2.5: start the tick on demand when a run is active.
