@@ -1,45 +1,44 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <odoo>
-    <!-- Add Assistant menu under LLM Configuration -->
+    <!-- Assistants → Configuration -->
     <menuitem
-    id="menu_llm_assistant"
-    name="Assistants"
-    parent="llm.menu_llm_config"
-    action="action_llm_assistant"
-    sequence="26"
-  />
+        id="menu_llm_assistant"
+        name="Assistants"
+        parent="llm.menu_llm_config"
+        action="action_llm_assistant"
+        sequence="25"
+    />
 
-    <!-- Root Menu for Prompts -->
+    <!-- Prompt Templates → Configuration (was "Prompts" at root level) -->
     <menuitem
-    id="llm_prompt_menu"
-    name="Prompts"
-    parent="llm.menu_llm_root"
-    action="llm_prompt_action"
-    sequence="20"
-  />
+        id="llm_prompt_menu"
+        name="Prompt Templates"
+        parent="llm.menu_llm_config"
+        action="llm_prompt_action"
+        sequence="35"
+    />
 
-    <!-- Configuration Menu -->
+    <!-- Prompt Templates sub-menus (Categories, Tags) -->
     <menuitem
-    id="llm_prompt_configuration_menu"
-    name="Prompts Configuration"
-    parent="llm.menu_llm_config"
-    sequence="30"
-  />
-
-    <!-- Configuration Sub-menus -->
-    <menuitem
-    id="llm_prompt_category_menu"
-    name="Categories"
-    parent="llm_prompt_configuration_menu"
-    action="llm_prompt_category_action"
-    sequence="10"
-  />
+        id="llm_prompt_configuration_menu"
+        name="Prompt Configuration"
+        parent="llm.menu_llm_config"
+        sequence="36"
+    />
 
     <menuitem
-    id="llm_prompt_tag_menu"
-    name="Tags"
-    parent="llm_prompt_configuration_menu"
-    action="llm_prompt_tag_action"
-    sequence="20"
-  />
+        id="llm_prompt_category_menu"
+        name="Categories"
+        parent="llm_prompt_configuration_menu"
+        action="llm_prompt_category_action"
+        sequence="20"
+    />
+
+    <menuitem
+        id="llm_prompt_tag_menu"
+        name="Tags"
+        parent="llm_prompt_configuration_menu"
+        action="llm_prompt_tag_action"
+        sequence="30"
+    />
 </odoo>

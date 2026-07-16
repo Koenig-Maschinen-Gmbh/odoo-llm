@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
-    <!-- Menu Item -->
+    <!-- Tools → Configuration → AI Services -->
     <menuitem
-    id="menu_llm_tool"
-    name="Tools"
-    parent="llm.menu_llm_config"
-    action="action_llm_tool"
-    sequence="20"
-  />
+        id="menu_llm_tool"
+        name="Tools"
+        action="action_llm_tool"
+        parent="llm.menu_llm_ai_services"
+        sequence="40"
+    />
 
-    <!-- Tool Consent Config Menu Item -->
+    <!-- Tool Consent → Configuration → AI Services -->
     <menuitem
-    id="menu_llm_tool_consent_config"
-    name="Tool Consent"
-    parent="llm.menu_llm_config"
-    action="action_llm_tool_consent_config"
-    sequence="25"
-  />
+        id="menu_llm_tool_consent_config"
+        name="Tool Consent"
+        action="action_llm_tool_consent_config"
+        parent="llm.menu_llm_ai_services"
+        sequence="50"
+    />
 </odoo>

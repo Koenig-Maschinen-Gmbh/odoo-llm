@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
-    <!-- Add Vector Stores to the LLM > Configuration menu -->
+    <!-- Vector Stores stays under Configuration (llm_store does not depend on
+         llm_knowledge, so the Knowledge Base parent xmlid is not available).
+         The menu is still in the Configuration → AI Services section. -->
     <menuitem
-    id="menu_llm_store"
-    name="Vector Stores"
-    action="llm_store_action"
-    parent="llm.menu_llm_config"
-    sequence="50"
-  />
+        id="menu_llm_store"
+        name="Vector Stores"
+        action="llm_store_action"
+        parent="llm.menu_llm_ai_services"
+        sequence="35"
+    />
 </odoo>

@@ -229,8 +229,8 @@
     id="menu_llm_mcp_server_config"
     name="MCP Server"
     action="llm_mcp_server_config_action"
-    parent="llm.menu_llm_config"
-    sequence="50"
+    parent="llm.menu_llm_ai_services"
+    sequence="60"
   />
 
 </odoo>

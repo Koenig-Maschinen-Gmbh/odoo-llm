@@ -8,7 +8,7 @@
         and Chroma vector stores.
     """,
     "category": "Technical",
-    "version": "18.0.1.4.0",
+    "version": "18.0.1.4.1",
     "depends": ["llm", "llm_store"],
     "external_dependencies": {
         "python": ["requests", "markdownify", "PyMuPDF", "numpy"],
@@ -27,9 +27,9 @@
         # Wizard Views
         "wizards/create_rag_resource_wizard_views.xml",
         "wizards/upload_resource_wizard_views.xml",
-        # Menus must come last
-        "views/llm_resource_menu.xml",
+        # Menus must come last (root menu before children that reference it)
         "views/menu.xml",
+        "views/llm_resource_menu.xml",
     ],
     "images": [
         "static/description/banner.jpeg",

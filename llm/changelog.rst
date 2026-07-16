@@ -1,3 +1,9 @@
+18.0.1.8.1 (2026-07-16)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] Menu restructure: menus consolidated under 'König Intelligence'
+  (was 'LLM'). Items re-parented and re-sequenced for clarity.
+
 18.0.1.8.0 (2026-07-09)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

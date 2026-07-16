@@ -74,8 +74,8 @@
     id="menu_llm_mcp_session"
     name="MCP Sessions"
     action="llm_mcp_session_action"
-    parent="llm.menu_llm_config"
-    sequence="55"
+    parent="llm.menu_llm_ai_services"
+    sequence="70"
   />
 
 </odoo>

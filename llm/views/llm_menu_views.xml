@@ -1,45 +1,62 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
-    <!-- Root Menu -->
+    <!-- König Intelligence — root app menu (was "LLM").
+         Brand name, never translated. -->
     <menuitem
-    id="menu_llm_root"
-    name="LLM"
-    web_icon="llm,static/description/icon.png"
-    sequence="100"
-  />
+        id="menu_llm_root"
+        name="König Intelligence"
+        web_icon="llm,static/description/icon.png"
+        sequence="100"
+    />
 
-    <!-- Configuration Menu -->
+    <!-- Configuration Menu (visible to ALL users; items are group-gated) -->
     <menuitem
-    id="menu_llm_config"
-    name="Configuration"
-    parent="menu_llm_root"
-    sequence="100"
-  />
+        id="menu_llm_config"
+        name="Configuration"
+        parent="menu_llm_root"
+        sequence="90"
+    />
 
-    <!-- Provider Menu -->
+    <!-- ===== AI Services sub-container (under Configuration) ===== -->
     <menuitem
-    id="menu_llm_provider"
-    name="Providers"
-    action="llm_provider_action"
-    parent="menu_llm_config"
-    sequence="10"
-  />
+        id="menu_llm_ai_services"
+        name="AI Services"
+        parent="menu_llm_config"
+        sequence="45"
+    />
 
-    <!-- Publisher Menu -->
+    <!-- Providers → AI Services -->
     <menuitem
-    id="menu_llm_publisher"
-    name="Publishers"
-    action="llm_publisher_action"
-    parent="menu_llm_config"
-    sequence="15"
-  />
+        id="menu_llm_provider"
+        name="Providers"
+        action="llm_provider_action"
+        parent="menu_llm_ai_services"
+        sequence="10"
+    />
 
-    <!-- Model Menu -->
+    <!-- Publishers → AI Services -->
     <menuitem
-    id="menu_llm_model"
-    name="Models"
-    action="llm_model_action"
-    parent="menu_llm_config"
-    sequence="20"
-  />
+        id="menu_llm_publisher"
+        name="Publishers"
+        action="llm_publisher_action"
+        parent="menu_llm_ai_services"
+        sequence="20"
+    />
+
+    <!-- Models → AI Services -->
+    <menuitem
+        id="menu_llm_model"
+        name="Models"
+        action="llm_model_action"
+        parent="menu_llm_ai_services"
+        sequence="30"
+    />
+
+    <!-- ===== Training & Generation sub-container (under Configuration) ===== -->
+    <menuitem
+        id="menu_llm_training_generation"
+        name="Training &amp; Generation"
+        parent="menu_llm_config"
+        sequence="55"
+    />
 </odoo>
