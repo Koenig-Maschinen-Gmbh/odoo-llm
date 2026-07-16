@@ -1,25 +1,29 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
-    <!-- Chat Menu Item -->
+    <!-- Chat — top-level under König Intelligence (unchanged) -->
     <menuitem
-    id="menu_llm_chat"
-    name="Chat"
-    action="action_llm_chat"
-    parent="llm.menu_llm_root"
-    sequence="10"
-  />
+        id="menu_llm_chat"
+        name="Chat"
+        action="action_llm_chat"
+        parent="llm.menu_llm_root"
+        sequence="10"
+    />
+
+    <!-- Threads → Configuration -->
     <menuitem
-    id="menu_llm_thread"
-    name="Threads"
-    action="llm_thread_action"
-    parent="llm.menu_llm_config"
-    sequence="27"
-  />
+        id="menu_llm_thread"
+        name="Threads"
+        action="llm_thread_action"
+        parent="llm.menu_llm_config"
+        sequence="30"
+    />
+
+    <!-- Chat Tags → Configuration -->
     <menuitem
-    id="menu_llm_thread_tag"
-    name="Chat Tags"
-    action="llm_thread_tag_action"
-    parent="llm.menu_llm_config"
-    sequence="28"
-  />
+        id="menu_llm_thread_tag"
+        name="Chat Tags"
+        action="llm_thread_tag_action"
+        parent="llm.menu_llm_config"
+        sequence="31"
+    />
 </odoo>
