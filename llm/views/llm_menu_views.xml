@@ -5,7 +5,7 @@
     <menuitem
         id="menu_llm_root"
         name="König Intelligence"
-        web_icon="llm,static/description/icon.png"
+        web_icon="llm,static/description/icon.svg"
         sequence="100"
     />
 
