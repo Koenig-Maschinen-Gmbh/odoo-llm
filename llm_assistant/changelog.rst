@@ -1,3 +1,27 @@
+18.0.1.10.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **LLM API transient-error retry layer:** ``_generate_assistant_response``
+  now retries ``model_id.chat()`` with exponential backoff (3 attempts, 1s/2s/4s
+  base) for transient LLM API failures (5xx, timeout, connection, 429). This is
+  a second layer on top of the OpenAI SDK's own retry (``max_retries=3`` in
+  ``openai_get_client``). Non-transient errors (400, 401, 403) propagate
+  immediately — the run is marked "failed" (not "done") with a clear error
+  message. ``GenerationCancelled`` (``BaseException``) is never caught — it
+  propagates cleanly to the cancel handler.
+
+* [ADD] ``TransientLLMError`` exception class and ``_is_transient_llm_error``
+  generic classifier (class-name heuristic + ``status_code`` attribute — no
+  SDK-specific imports). Retry parameters configurable via
+  ``ir.config_parameter``: ``llm_assistant.max_retries`` (default 3),
+  ``llm_assistant.backoff_base`` (default 1.0s).
+
+* [CHANGED] **Error propagation redesign:** The broad ``except Exception`` in
+  ``_generate_assistant_response`` (which caught ALL errors, posted an error
+  message, and returned it — making the run look "done") is replaced by the
+  retry loop. After retries are exhausted, the exception propagates to
+  ``_execute`` which marks the run "failed" and posts the error message.
+
 18.0.1.9.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

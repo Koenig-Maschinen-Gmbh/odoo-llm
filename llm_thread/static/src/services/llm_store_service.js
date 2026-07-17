@@ -310,6 +310,30 @@ export const llmStoreService = {
                         console.log("[LLM] no-op event:", data.type);
                         break;
 
+                    case "bus_event": {
+                        // A progress event from the background orchestration run,
+                        // delivered via the SSE progress loop (continuous SSE
+                        // channel — no WebSocket dependency). The payload is the
+                        // same format as the bus event payload.
+                        this._handleOrchestrationBusEvent(threadId, data.event || {});
+                        break;
+                    }
+
+                    case "run_terminal": {
+                        // The run reached a terminal state — the SSE progress
+                        // loop is about to close. Set the terminal state and
+                        // reload messages so the final answer appears.
+                        this.stopStreaming(threadId);
+                        const terminalState = data.state || "done";
+                        this.setThreadRunState(threadId, {
+                            state: terminalState,
+                            label: data.message || terminalState,
+                            error: data.error || terminalState === "failed",
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    }
+
                     default:
                         console.warn("Unknown stream message type:", data.type);
                         break;
@@ -582,6 +606,105 @@ export const llmStoreService = {
 
             // P-CHAT M3 — live run-feedback API (called by the koenig bus
             // subscriber; the fork store stays generic and channel-agnostic).
+            _handleOrchestrationBusEvent(threadId, payload) {
+                /** Handle an orchestration progress event (from SSE bus_event
+                 * or from the WebSocket bus subscriber). Extracted here so
+                 * both delivery paths share the same logic.
+                 *
+                 * The ``run_paused`` case sets the state to "paused" but does
+                 * NOT call the interaction service — that is handled by the
+                 * König ``orchestration_bus_service.js`` subscriber (which
+                 * has access to the interaction service).
+                 */
+                const data = payload || {};
+                const event = data.event;
+                const message = data.message;
+                // Normalize task_* events to run_* for backward compat.
+                const normalizedEvent =
+                    event && event.startsWith("task_") ? "run_" + event.substring(5) : event;
+                switch (normalizedEvent) {
+                    case "run_started":
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: message || "Working...",
+                            startedAt: Date.now(),
+                            finishedAt: null,
+                            error: false,
+                        });
+                        break;
+                    case "expert_dispatched":
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: message || "Working...",
+                        });
+                        break;
+                    case "expert_completed":
+                    case "expert_failed":
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: message || "Working...",
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_done":
+                        this.setThreadRunState(threadId, {
+                            state: "done",
+                            label: message || "Done",
+                            error: false,
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_failed":
+                        this.setThreadRunState(threadId, {
+                            state: "failed",
+                            label: message || "Failed",
+                            error: true,
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_cancelled":
+                        this.setThreadRunState(threadId, {
+                            state: "cancelled",
+                            label: message || "Cancelled",
+                            error: false,
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_killed":
+                        this.setThreadRunState(threadId, {
+                            state: "killed",
+                            label: message || "Killed",
+                            error: false,
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_timed_out":
+                        this.setThreadRunState(threadId, {
+                            state: "timed_out",
+                            label: message || "Timed out",
+                            error: false,
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
+                    case "run_paused":
+                        this.setThreadRunState(threadId, {
+                            state: "paused",
+                            label: message || "Awaiting approval",
+                            error: false,
+                        });
+                        break;
+                    case "run_resumed":
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: message || "Resuming...",
+                            error: false,
+                        });
+                        break;
+                    default:
+                        break;
+                }
+            },
+
             setThreadRunState(threadId, vals) {
                 if (!threadId) {
                     return;

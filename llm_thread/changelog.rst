@@ -1,3 +1,18 @@
+18.0.1.16.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **``_handleOrchestrationBusEvent`` shared handler:** the
+  orchestration event → thread-state-transition switch statement is now a
+  method on ``llmStore`` (in ``llm_store_service.js``). Both the WebSocket
+  bus subscriber (König ``orchestration_bus_service.js``) and the SSE
+  progress loop call this shared method. Eliminates duplication.
+* [ADD] **``bus_event`` and ``run_terminal`` SSE event types:** the
+  ``handleStreamMessage`` method now handles ``bus_event`` (a progress event
+  from the background run, delivered via the continuous SSE channel) and
+  ``run_terminal`` (the run reached a terminal state — the SSE is about to
+  close). These enable the durable live-update architecture (no limbo state
+  between SSE close and bus event delivery).
+
 18.0.1.15.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

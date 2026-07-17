@@ -24,6 +24,7 @@ SOFTWARE.
 """
 
 import logging
+import time
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
@@ -79,6 +80,22 @@ class GenerationPaused(BaseException):
     otherwise swallow the pause signal. Like cancel, pause is a control-flow
     signal — the assistant message with ``tool_calls`` is already committed to
     the DB before this fires, so the exception carries no payload.
+    """
+
+
+class TransientLLMError(Exception):
+    """An LLM API error that may succeed on retry (5xx, timeout, connection).
+
+    The OpenAI SDK already retries at the HTTP level (``max_retries=3`` in
+    ``openai_get_client``).  When this error is raised (or classified from a
+    raw SDK exception by ``_is_transient_llm_error``), it means the SDK's own
+    retries were exhausted.  The retry loop in
+    ``_generate_assistant_response`` catches it and retries the entire
+    ``chat()`` call with exponential backoff — a second layer on top of the
+    SDK's first layer.
+
+    Non-transient errors (400, 401, 403, Odoo ``UserError``, etc.) are NOT
+    this class — they propagate as-is and mark the run "failed".
     """
 
 
@@ -543,54 +560,125 @@ class LLMThread(models.Model):
     def _generate_assistant_response(
         self, final_answer=False, *, loop_control_check=None
     ):
-        """Generate assistant response and handle tool calls.
+        """Generate assistant response with transient-error retry.
 
-        Catches LLM API errors and posts them as error messages in the thread
-        so users can see what went wrong without checking server logs.
+        Calls ``model_id.chat()`` with an exponential-backoff retry loop for
+        transient LLM API failures (5xx, timeout, connection).  The OpenAI SDK
+        already retries at the HTTP level (``max_retries=3`` in
+        ``openai_get_client``); this is a second layer that retries the entire
+        ``chat()`` call when the SDK exhausts its own retries.
 
-        `final_answer=True` (used once the agentic loop hits `tool_calls_max`)
-        appends a transient nudge instructing the model to answer now without
-        calling more tools — while keeping tools available, so models that emit
-        native tool-call syntax as text when constrained still behave.
+        **Error propagation design:**
+        - Transient errors (after all retries exhausted) → propagate → the
+          orchestrator's ``_execute`` handler marks the run "failed".
+        - Non-transient errors (400, 401, 403) → propagate immediately →
+          same "failed" path.
+        - ``GenerationCancelled`` (``BaseException``) → never caught →
+          propagates cleanly to the cancel handler.
+        - Mid-stream errors → propagate immediately (no retry for partial
+          state; ``_handle_streaming_response`` handles error chunks
+          internally and does not raise ``TransientLLMError``).
+
+        ``final_answer=True`` (used once the agentic loop hits
+        ``tool_calls_max``) appends a transient nudge instructing the model to
+        answer now without calling more tools — while keeping tools available,
+        so models that emit native tool-call syntax as text when constrained
+        still behave.
         """
-        # Flush any pending writes to ensure latest messages are visible
         self.env.flush_all()
-
-        # Use the new optimized method for LLM context
         message_history = self.get_llm_messages()
-
-        # Determine if we should use streaming
         use_streaming = getattr(self.model_id, "supports_streaming", True)
-
         chat_kwargs = self._prepare_chat_kwargs(
             message_history, use_streaming, final_answer=final_answer
         )
 
-        try:
+        max_retries = int(
+            self.env["ir.config_parameter"]
+            .sudo()
+            .get_param(
+                "llm_assistant.max_retries",
+                3,
+            )
+        )
+        backoff_base = float(
+            self.env["ir.config_parameter"]
+            .sudo()
+            .get_param(
+                "llm_assistant.backoff_base",
+                1.0,
+            )
+        )
+
+        for attempt in range(max_retries):
+            # Phase 1: call the LLM API (retryable on transient errors).
+            # TransientLLMError is only raised by chat() — BEFORE any stream
+            # chunks are processed.  Mid-stream connection drops are raw SDK
+            # exceptions that propagate immediately (no partial-state retry).
+            try:
+                raw_response = self.sudo().model_id.chat(**chat_kwargs)
+            except Exception as exc:
+                if self._is_transient_llm_error(exc) and attempt < max_retries - 1:
+                    wait = backoff_base * (2**attempt)
+                    _logger.warning(
+                        "LLM API transient error (attempt %d/%d): %s — retrying in %ss",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
+
+            # Phase 2: process the response (NOT retryable).
+            # If the stream fails mid-way, the error propagates immediately —
+            # the message has already been partially posted and cannot be
+            # retried.  _handle_streaming_response handles error chunks
+            # internally (yields error events, returns the partial message).
             if use_streaming:
-                # Handle streaming response - process tool calls directly from stream
-                stream_response = self.sudo().model_id.chat(**chat_kwargs)
                 assistant_message = yield from self._handle_streaming_response(
-                    stream_response,
+                    raw_response,
                     loop_control_check=loop_control_check,
                 )
             else:
-                # Handle non-streaming response
-                response = self.sudo().model_id.chat(**chat_kwargs)
                 assistant_message = yield from self._handle_non_streaming_response(
-                    response,
+                    raw_response,
                 )
-        except Exception as e:
-            # Post error message to thread so user can see it
-            _logger.exception("LLM API error in thread %s", self.id)
-            error_message, event = self._post_error_message(
-                e,
-                title=_("LLM API Error"),
-            )
-            yield event
-            return error_message
+            return assistant_message
 
-        return assistant_message
+    def _is_transient_llm_error(self, exc):
+        """Classify an LLM API exception as transient (retryable) or not.
+
+        The OpenAI SDK retries at the HTTP level (``max_retries=3`` in
+        ``openai_get_client``).  If the SDK raises after exhausting its own
+        retries, this method classifies the error so the caller's retry loop
+        can retry the entire ``chat()`` call.
+
+        Classification is generic (no SDK-specific imports) — it checks the
+        exception class name and the ``status_code`` attribute.  Works with
+        the OpenAI SDK and any OpenAI-compatible provider.
+
+        Transient (retry):
+            - ``TransientLLMError`` (explicitly classified)
+            - Connection / timeout errors (class name heuristic)
+            - HTTP 5xx (``status_code >= 500``)
+            - HTTP 429 rate limit (``status_code == 429``)
+
+        Non-transient (propagate):
+            - HTTP 400 (bad request), 401 (auth), 403 (forbidden), 404
+            - Odoo ``UserError`` / ``ValidationError`` (data issues)
+            - Any other ``Exception`` not matching the transient criteria
+            - ``GenerationCancelled`` (``BaseException`` — never reaches here)
+        """
+        if isinstance(exc, TransientLLMError):
+            return True
+        exc_name = type(exc).__name__
+        if "Timeout" in exc_name or "Connection" in exc_name:
+            return True
+        status = getattr(exc, "status_code", None)
+        if status is not None and (status >= 500 or status == 429):
+            return True
+        return False
 
     def _prepare_chat_kwargs(self, message_history, use_streaming, final_answer=False):
         """Prepare chat kwargs for provider. Can be overridden by extensions.
