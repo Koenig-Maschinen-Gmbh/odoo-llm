@@ -461,12 +461,11 @@ class LLMThread(models.Model):
                         last_message,
                     )
                     last_message = tool_message
-                    # Guard: skip the commit when running inside a savepoint
-                    # (sub-agent path via dispatch_expert). Committing here
-                    # would destroy the master's tool-call savepoint, causing
-                    # "savepoint does not exist" → poisoned transaction.
-                    if not self.env.context.get("koenig_no_auto_commit"):
-                        self.env.cr.commit()
+                    # Commit to persist the tool result + flush bus events.
+                    # Sub-agents run on an independent cursor (self.pool.cursor()
+                    # in _run_subagent), so this commit goes to the sub-cr, not
+                    # the master's savepoint. See ODOO-transaction-savepoint-commit.md.
+                    self.env.cr.commit()  # pylint: disable=invalid-commit
             else:
                 _logger.info(
                     f"Breaking loop. Last message role: {last_message.llm_role}, "
@@ -856,17 +855,13 @@ class LLMThread(models.Model):
                     author_id=False,
                 )
                 # Commit to ensure message is saved before tool execution
-                # (skipped inside a savepoint — see line 464 comment)
-                if not self.env.context.get("koenig_no_auto_commit"):
-                    self.env.cr.commit()
+                self.env.cr.commit()  # pylint: disable=invalid-commit
                 yield {"type": "message_create", "message": message.to_store_format()}
             else:
                 # Update existing message with tool calls
                 message.write({"body_json": body_json})
                 # Commit to ensure update is saved
-                # (skipped inside a savepoint — see line 464 comment)
-                if not self.env.context.get("koenig_no_auto_commit"):
-                    self.env.cr.commit()
+                self.env.cr.commit()  # pylint: disable=invalid-commit
                 yield {"type": "message_update", "message": message.to_store_format()}
         elif message and accumulated_content:
             # Final update for assistant message without tool calls

@@ -1,3 +1,14 @@
+18.0.1.9.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHANGED] **Removed ``koenig_no_auto_commit`` guards:** The 3
+  ``cr.commit()`` calls in ``generate_messages`` are now unconditional.
+  Sub-agents run on an independent cursor (``self.pool.cursor()``) in
+  ``koenig_ai_expert._run_subagent``, so their commits go to the
+  independent cursor, not the master's savepoint. The fragile
+  ``koenig_no_auto_commit`` context flag is no longer needed and has been
+  removed. See ``RESEARCH_FINDINGS_2026-07-17_ORCHESTRATOR_ARCHITECTURE.md``.
+
 18.0.1.8.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
