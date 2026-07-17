@@ -238,7 +238,6 @@ class MailMessage(models.Model):
 
             # Savepoint released — success path. Yields are OUTSIDE the
             # savepoint so it's not held open during streaming.
-            yield {"type": "message_update", "message": self.to_store_format()}
             yield {
                 "type": "tool_succeeded",
                 "tool_data": {
@@ -274,6 +273,13 @@ class MailMessage(models.Model):
                     "error": str(e),
                 },
             }
+
+        # Final message_update + return — runs for BOTH success and error
+        # paths (outside the try/except). This was accidentally removed during
+        # the savepoint restructuring, causing the generator to return None
+        # instead of self → the agentic loop exited early, no final answer.
+        yield {"type": "message_update", "message": self.to_store_format()}
+        return self
 
     def _validate_tool_call(self, tool_call):
         """Validate tool call structure.
