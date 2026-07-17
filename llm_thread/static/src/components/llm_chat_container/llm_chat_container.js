@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import { Component, useRef, useState } from "@odoo/owl";
+import { Component, onWillUnmount, status, useRef, useState } from "@odoo/owl";
 import { Composer } from "@mail/core/common/composer";
 import { LLMThreadHeader } from "../llm_thread_header/llm_thread_header";
 import { LLMSidebar } from "../llm_sidebar/llm_sidebar";
@@ -8,6 +8,12 @@ import { LLMThreadHud } from "../llm_thread_hud/llm_thread_hud";
 import { Thread } from "@mail/core/common/thread";
 import { useService } from "@web/core/utils/hooks";
 import { browser } from "@web/core/browser/browser";
+
+// Sidebar resize constants (wiki pattern: localStorage + CSS custom property).
+const SIDEBAR_WIDTH_KEY = "llm_thread.sidebar_width";
+const SIDEBAR_WIDTH_DEFAULT = 280;
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 500;
 
 // P-CHAT link-navigation: intercept /odoo/<model>/<id> record links in AI
 // answer bodies + route them through the action service (doAction) so the
@@ -48,6 +54,18 @@ export class LLMChatContainer extends Component {
         // Reference to the scrollable thread container for proper jump-to-present behavior
         this.threadScrollableRef = useRef("threadScrollable");
 
+        // Read persisted sidebar width (wiki pattern).
+        let initialWidth = SIDEBAR_WIDTH_DEFAULT;
+        try {
+            const raw = browser.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+            const parsed = parseInt(raw, 10);
+            if (Number.isFinite(parsed)) {
+                initialWidth = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, parsed));
+            }
+        } catch {
+            // Non-fatal — use default width.
+        }
+
         // Sidebar layout state (the sidebar CONTENT state — search, archive,
         // bulk, buckets — lives inside LLMSidebar).
         this.state = useState({
@@ -55,7 +73,15 @@ export class LLMChatContainer extends Component {
             isSidebarCollapsed: Boolean(this.props.recordModel && this.props.recordId),
             // Mobile: slide-in modal visibility
             isMobileSidebarVisible: false,
+            // Resizable sidebar width (persisted in localStorage).
+            sidebarWidth: initialWidth,
+            resizingSidebar: false,
         });
+
+        // Bind resize handlers once (wiki pattern).
+        this._onSidebarResizeMove = this._onSidebarResizeMove.bind(this);
+        this._onSidebarResizeEnd = this._onSidebarResizeEnd.bind(this);
+        onWillUnmount(() => this._detachSidebarResizeListeners());
     }
 
     /**
@@ -151,13 +177,29 @@ export class LLMChatContainer extends Component {
         }
         // User requests + AI final answers (NOT the muted step/thinking
         // messages — those are the noise this tool lets you jump over).
-        const mainMessages = container.querySelectorAll(
-            ".o-llm-message-user, .o-llm-final-answer"
+        // Use both class-based and role-based queries for robustness: the
+        // class is added by message_patch.js className getter, but if the
+        // patch hasn't applied yet (timing), the role-based fallback
+        // catches user messages via the data attribute.
+        let mainMessages = Array.from(
+            container.querySelectorAll(".o-llm-message-user, .o-llm-final-answer")
         );
+        // Fallback: also check for mail's standard message containers that
+        // contain user-authored content (llm_role === "user").
+        if (!mainMessages.length) {
+            mainMessages = Array.from(container.querySelectorAll(".o-mail-Message")).filter(
+                (el) => {
+                    const role = el.dataset?.llmRole || el.getAttribute?.("data-llm-role");
+                    return role === "user" || role === "assistant";
+                }
+            );
+        }
         if (!mainMessages.length) {
             return;
         }
         const containerRect = container.getBoundingClientRect();
+        // Use a threshold slightly below the top of the visible area so
+        // the "previous" message isn't the one currently at the top.
         const threshold = containerRect.top + 50;
         let target = null;
         if (direction === "up") {
@@ -178,7 +220,12 @@ export class LLMChatContainer extends Component {
             }
         }
         if (target) {
-            target.scrollIntoView({ behavior: "smooth", block: "start" });
+            // Use "nearest" instead of "start" to avoid creating whitespace
+            // below the composer when scrolling to the last message.
+            target.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
         }
     }
 
@@ -287,6 +334,63 @@ export class LLMChatContainer extends Component {
                 },
             }
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Sidebar resize (Bug 4 — wiki pattern: localStorage + CSS var)
+    // ------------------------------------------------------------------
+
+    onSidebarResizeStart(ev) {
+        if (ev.button !== 0 || this.state.isSidebarCollapsed) {
+            return;
+        }
+        ev.preventDefault();
+        this._sidebarResizeStart = {
+            startX: ev.clientX,
+            startWidth: this.state.sidebarWidth,
+        };
+        this.state.resizingSidebar = true;
+        document.addEventListener("mousemove", this._onSidebarResizeMove);
+        document.addEventListener("mouseup", this._onSidebarResizeEnd);
+    }
+
+    _onSidebarResizeMove(ev) {
+        if (!this._sidebarResizeStart || status(this) === "destroyed") {
+            return;
+        }
+        const delta = ev.clientX - this._sidebarResizeStart.startX;
+        const next = this._sidebarResizeStart.startWidth + delta;
+        this.state.sidebarWidth = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, next));
+    }
+
+    _onSidebarResizeEnd() {
+        if (!this._sidebarResizeStart) {
+            return;
+        }
+        this._sidebarResizeStart = null;
+        if (status(this) !== "destroyed") {
+            this.state.resizingSidebar = false;
+            try {
+                browser.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(this.state.sidebarWidth));
+            } catch {
+                // Quota exceeded — non-fatal.
+            }
+        }
+        this._detachSidebarResizeListeners();
+    }
+
+    _detachSidebarResizeListeners() {
+        document.removeEventListener("mousemove", this._onSidebarResizeMove);
+        document.removeEventListener("mouseup", this._onSidebarResizeEnd);
+    }
+
+    onSidebarResizeReset() {
+        this.state.sidebarWidth = SIDEBAR_WIDTH_DEFAULT;
+        try {
+            browser.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_WIDTH_DEFAULT));
+        } catch {
+            // Quota exceeded — non-fatal.
+        }
     }
 }
 

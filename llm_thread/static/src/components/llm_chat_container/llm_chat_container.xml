@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <templates xml:space="preserve">
     <t t-name="llm_thread.LLMChatContainer">
-        <div class="o_LLMChatContainer h-100 d-flex flex-row overflow-hidden">
+        <div
+            class="o_LLMChatContainer h-100 d-flex flex-row overflow-hidden"
+            t-att-class="{ 'o-llm-resizing': state.resizingSidebar }"
+            t-att-style="state.isSidebarCollapsed ? '' : '--llm-sidebar-width: ' + state.sidebarWidth + 'px;'"
+        >
             <!-- Mobile: Backdrop overlay -->
             <t t-if="isSmall">
                 <div
@@ -29,11 +33,11 @@
         />
             </div>
 
-            <!-- Desktop Sidebar: Expand/collapse pattern (shown when isSmall = false) -->
+            <!-- Desktop Sidebar: Expand/collapse + resizable (wiki pattern) -->
             <div
         t-if="!isSmall"
-        class="o-llm-sidebar d-flex flex-column border-end"
-        t-att-style="state.isSidebarCollapsed ? 'width: 48px;' : 'width: 280px;'"
+        class="o-llm-sidebar d-flex flex-column border-end position-relative"
+        t-att-style="state.isSidebarCollapsed ? 'width: 48px;' : 'width: var(--llm-sidebar-width, 280px);'"
       >
                 <LLMSidebar
           recordModel="props.recordModel"
@@ -43,6 +47,13 @@
           onSelectThread="(threadId) => this.selectThread(threadId)"
           onCreateThread="() => this.createNewThread()"
           onToggleSidebar="() => this.toggleSidebar()"
+        />
+                <!-- Resize handle (only when expanded) -->
+                <div
+          t-if="!state.isSidebarCollapsed"
+          class="o-llm-sidebar-resizer"
+          t-on-mousedown="onSidebarResizeStart"
+          t-on-dblclick="onSidebarResizeReset"
         />
             </div>
 

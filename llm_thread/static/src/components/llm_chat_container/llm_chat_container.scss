@@ -9,13 +9,13 @@
   }
 
   // P-UX Item 7.1 — floating jump arrows for skimming user messages.
-  // Anchored above the composer + P-HUD (so they don't overlap the send
-  // button) and offset from the right edge (so they don't sit on the
-  // thread area's scrollbar). The composer is ~58px + P-HUD ~24px, so
-  // ~88px clears both with a small margin.
+  // Moved up to clear the composer (~58px) + P-HUD (~24px) + OCB's
+  // scroll-to-bottom button (~40px) + breathing room. The previous
+  // 88px was too low — it collided with the send button and OCB's
+  // third scroll arrow.
   .o-llm-jump-arrows {
     z-index: 10;
-    bottom: 88px;
+    bottom: 130px;
     right: 22px;
 
     .btn {
@@ -31,6 +31,33 @@
       &:hover {
         opacity: 1;
       }
+    }
+  }
+
+  // Bug 4 — sidebar resizer handle (wiki pattern).
+  .o-llm-sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+    background: transparent;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  // While dragging, suppress text-selection across the whole container.
+  &.o-llm-resizing {
+    cursor: col-resize !important;
+    user-select: none;
+
+    * {
+      user-select: none !important;
     }
   }
 
@@ -50,6 +77,17 @@
         background-color: var(--primary);
         color: white;
 
+        // All indicator icons should be pure white on the red background
+        .text-success,
+        .text-danger,
+        .text-primary {
+          color: white !important;
+        }
+        // Spinner: pure white, always visible
+        .fa-circle-o-notch {
+          color: white !important;
+        }
+        // Muted text (date): slightly transparent white for hierarchy
         .text-muted {
           color: rgba(255, 255, 255, 0.7) !important;
         }
@@ -142,8 +180,15 @@
     }
   }
 
-  // Thread area mobile padding
+  // Thread area
   .o-llm-thread-area {
+    // Ensure scrollIntoView doesn't create whitespace at the bottom
+    // when jumping to the last message (Bug 3 fix).
+    .o-mail-Message {
+      scroll-margin-top: 16px;
+      scroll-margin-bottom: 16px;
+    }
+
     @media (max-width: 767px) {
       padding: 0.5rem !important;
     }

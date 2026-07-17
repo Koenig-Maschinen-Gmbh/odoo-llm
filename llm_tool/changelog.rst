@@ -1,3 +1,15 @@
+18.0.4.2.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **Poisoned transaction defense-in-depth:** Restructured
+  ``execute_tool_call`` to move the ``self.write`` (status = "executing")
+  INSIDE the savepoint. Previously, this write was BEFORE the savepoint —
+  if it failed (access check SQL error), the savepoint couldn't be created
+  (``cr.flush()`` in ``_FlushingSavepoint.__init__`` would fail on the
+  poisoned transaction), and the error handler's ``self.write`` would
+  also fail. Yields moved OUTSIDE the savepoint to minimize the window.
+  Error-path ``self.write`` wrapped in try/except as a final safety net.
+
 18.0.4.1.6 (2026-07-16)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

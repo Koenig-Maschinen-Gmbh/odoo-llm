@@ -5,10 +5,13 @@ import { Component, onMounted, onWillUnmount, status, useState } from "@odoo/owl
 import { useService } from "@web/core/utils/hooks";
 import { debounce } from "@web/core/utils/timing";
 import { cleanTerm } from "@mail/utils/common/format";
-import { deserializeDateTime } from "@web/core/l10n/dates";
+import { deserializeDateTime, formatDateTime } from "@web/core/l10n/dates";
+import { browser } from "@web/core/browser/browser";
 import { ConfirmationDialog } from "@web/core/confirmation_dialog/confirmation_dialog";
 import { LLMBulkTagDialog } from "../llm_bulk_tag_dialog/llm_bulk_tag_dialog";
 import { LLM_DATE_BUCKETS, llmDateBucket } from "../../utils/llm_date_bucket";
+
+const BUCKET_COLLAPSE_KEY = "llm_thread.collapsed_buckets";
 
 const { DateTime } = luxon;
 
@@ -55,14 +58,27 @@ export class LLMSidebar extends Component {
         this.notification = useService("notification");
         this.bucketLabels = BUCKET_LABELS;
 
+        // Read persisted collapsed-bucket state so the user's section
+        // preferences survive page refreshes.
+        let persistedBuckets = {};
+        try {
+            const raw = browser.localStorage.getItem(BUCKET_COLLAPSE_KEY);
+            if (raw) {
+                persistedBuckets = JSON.parse(raw);
+            }
+        } catch {
+            // Non-fatal — start with all buckets expanded.
+        }
+
         this.state = useState({
             searchVal: "",
             showArchived: false,
-            collapsedBuckets: {},
+            collapsedBuckets: persistedBuckets,
             selectMode: false,
             selectedThreadIds: {}, // {id: true} — plain object for reactivity
             serverMatchedIds: {}, // {id: true} from the debounced server search
             elapsedTick: 0, // P-CHAT M3: drives the sidebar mm:ss + done/failed flash
+            _serverSearchFailed: false, // BL-7: one-time notification flag for server search failures
         });
 
         // Debounced server-side content search (message body). Client-side
@@ -88,22 +104,22 @@ export class LLMSidebar extends Component {
     // ------------------------------------------------------------------
     _maybeStartTick() {
         if (this._elapsedTimer) {
-                return;
-            }
-            this._elapsedTimer = setInterval(() => {
-                if (this._hasTimeSensitiveRunState()) {
-                    this.state.elapsedTick++;
-                } else {
-                    // Final re-render to remove stale flash icons before
-                    // stopping the tick. Without this, the last render (while
-                    // the flash was still active) leaves a stale icon in the
-                    // DOM — the tick stops without triggering the re-render
-                    // that would evaluate threadFinishedFlash → null.
-                    this.state.elapsedTick++;
-                    this._maybeStopTick();
-                }
-            }, 1000);
+            return;
         }
+        this._elapsedTimer = setInterval(() => {
+            if (this._hasTimeSensitiveRunState()) {
+                this.state.elapsedTick++;
+            } else {
+                // Final re-render to remove stale flash icons before
+                // stopping the tick. Without this, the last render (while
+                // the flash was still active) leaves a stale icon in the
+                // DOM — the tick stops without triggering the re-render
+                // that would evaluate threadFinishedFlash → null.
+                this.state.elapsedTick++;
+                this._maybeStopTick();
+            }
+        }, 1000);
+    }
 
     _maybeStopTick() {
         if (this._elapsedTimer) {
@@ -164,6 +180,15 @@ export class LLMSidebar extends Component {
 
     toggleBucket(key) {
         this.state.collapsedBuckets[key] = !this.state.collapsedBuckets[key];
+        // Persist the collapsed state so it survives page refreshes.
+        try {
+            browser.localStorage.setItem(
+                BUCKET_COLLAPSE_KEY,
+                JSON.stringify(this.state.collapsedBuckets)
+            );
+        } catch {
+            // Quota exceeded / disabled localStorage — non-fatal.
+        }
     }
 
     // ------------------------------------------------------------------
@@ -204,6 +229,13 @@ export class LLMSidebar extends Component {
         } catch (e) {
             // Fail soft — instant client-side name search still works.
             console.warn("[LLMSidebar] server search failed", e);
+            if (!this.state._serverSearchFailed) {
+                this.state._serverSearchFailed = true;
+                this.notification.add(_t("Search encountered an error. Showing basic results."), {
+                    type: "warning",
+                    sticky: false,
+                });
+            }
         }
     }
 
@@ -351,8 +383,8 @@ export class LLMSidebar extends Component {
         }
         this.dialog.add(LLMBulkTagDialog, {
             threadIds: ids,
-            onConfirm: async (tagIds) => {
-                await this.llmStore.bulkTag(ids, tagIds);
+            onConfirm: async (tagIds, mode) => {
+                await this.llmStore.bulkTag(ids, tagIds, mode);
                 this.state.selectedThreadIds = {};
             },
         });
@@ -362,33 +394,18 @@ export class LLMSidebar extends Component {
     // P-CHAT M3 — run-state indicators (moved from LLMChatContainer)
     // ------------------------------------------------------------------
     _hasTimeSensitiveRunState() {
-        const now = Date.now();
         let has = false;
-        // Keep the tick running while there are running threads OR terminal
-        // states still within the 3-second flash window. Previously, the tick
-        // stopped as soon as no running threads were found — but terminal
-        // states set by the bus event / poll within the last 3s still need
-        // the tick to drive elapsedTick so the component re-renders and the
-        // flash icon disappears after the window expires. Without this, stale
-        // check/exclamation icons stay in the DOM until a manual re-render
-        // (e.g. clicking a thread) — the "indicators vanish on thread switch"
-        // bug.
-        //
-        // Terminal states are NOT cleared from threadRunState (previously they
-        // were deleted via clearThreadRunState after 3s). Keeping them lets
-        // the bus service poll skip them (the poll's terminal-state guard
-        // checks getThreadRunState), preventing a feedback loop where the
-        // poll re-sets a terminal state every 10s → a new 3s flash → cleared
-        // by tick → re-set by poll → ... The map grows at most one entry per
-        // thread (keyed by threadId), which is bounded by the thread count.
+        // The tick is only needed for RUNNING threads (to update the
+        // elapsed mm:ss counter every second). Terminal states are now
+        // persistent (threadFinishedFlash no longer expires), so they
+        // don't need the tick — they render once and stay until a new
+        // run starts or the page is refreshed.
         for (const s of Object.values(this.llmStore.threadRunState || {})) {
             if (s.state === "running") {
                 has = true;
-            } else if (s.finishedAt && now - s.finishedAt <= 3000) {
-                has = true; // Still within flash window — keep ticking
+                break;
             }
         }
-        // P-UX review §2.5: start the tick on demand when a run is active.
         if (has) {
             this._maybeStartTick();
         }
@@ -402,6 +419,11 @@ export class LLMSidebar extends Component {
     threadElapsedLabel(threadId) {
         // Touch the tick so OWL re-evaluates each second while a run is active
         void this.state.elapsedTick;
+        // Ensure the tick is running if any thread is active — the tick
+        // may have stopped after all threads reached terminal state, and
+        // a new bus event (run_started) won't restart it without this
+        // call (the tick only self-restarts from inside its own callback).
+        this._hasTimeSensitiveRunState();
         const st = this.threadRunState(threadId);
         if (!st || st.state !== "running" || !st.startedAt) {
             return "";
@@ -419,10 +441,13 @@ export class LLMSidebar extends Component {
         if (!st || !st.finishedAt) {
             return null;
         }
-        if (Date.now() - st.finishedAt > 3000) {
-            return null;
-        }
-        return st.state; // "done" | "failed" | "cancelled"
+        // Terminal states persist until a new run starts (which clears
+        // finishedAt via setThreadRunState). The previous 3-second flash
+        // window caused indicators to vanish after clicking a thread or
+        // after a page refresh (the poll re-sets finishedAt to the poll
+        // time, not the actual completion time, so the flash expired
+        // almost immediately).
+        return st.state; // "done" | "failed" | "cancelled" | "killed" | "timed_out"
     }
 
     isStreamingThread(threadId) {
@@ -453,6 +478,6 @@ export class LLMSidebar extends Component {
         if (diffD < 7) {
             return _t("%sd ago", Math.floor(diffD));
         }
-        return dt.toLocaleString();
+        return formatDateTime(dt);
     }
 }

@@ -2,9 +2,29 @@
 <templates xml:space="preserve">
     <t t-name="llm_thread.LLMBulkTagDialog">
         <div class="o_llm_bulk_tag_dialog">
-            <p class="text-muted small">
+            <div class="btn-group btn-group-toggle mb-2" role="group">
+                <button
+                    type="button"
+                    t-attf-class="btn btn-sm {{ state.mode === 'add' ? 'btn-primary' : 'btn-outline-primary' }}"
+                    t-on-click="() => this.state.mode = 'add'"
+                >
+                    Add tags
+                </button>
+                <button
+                    type="button"
+                    t-attf-class="btn btn-sm {{ state.mode === 'remove' ? 'btn-primary' : 'btn-outline-primary' }}"
+                    t-on-click="() => this.state.mode = 'remove'"
+                >
+                    Remove tags
+                </button>
+            </div>
+            <p class="text-muted small" t-if="state.mode === 'add'">
                 Apply tags to <t t-out="props.threadIds.length" /> selected
                 conversation(s). Existing tags will be kept.
+            </p>
+            <p class="text-muted small" t-if="state.mode === 'remove'">
+                Remove tags from <t t-out="props.threadIds.length" /> selected
+                conversation(s).
             </p>
             <div
                 t-if="state.tags.length"
@@ -23,7 +43,7 @@
             <div t-if="!state.tags.length" class="text-muted small mb-3">
                 No tags yet — create one below.
             </div>
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2" t-if="state.mode === 'add'">
                 <input
                     type="text"
                     class="form-control"
@@ -46,7 +66,8 @@
                     t-on-click="onConfirm"
                     t-att-disabled="state.creating or (!selectedIds.length and !state.newTagName.trim())"
                 >
-                    Apply
+                    <t t-if="state.mode === 'add'">Apply</t>
+                    <t t-else="">Remove</t>
                 </button>
             </div>
         </div>

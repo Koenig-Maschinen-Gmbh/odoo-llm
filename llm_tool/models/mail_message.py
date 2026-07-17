@@ -218,14 +218,15 @@ class MailMessage(models.Model):
             },
         }
 
-        # Update status to executing
-        tool_data["status"] = "executing"
-        self.write({"body_json": tool_data})
-        yield {"type": "message_update", "message": self.to_store_format()}
-
-        # Execute tool and update message
+        # Update status to executing — inside the savepoint so that if the
+        # write fails (e.g., access check SQL error), the savepoint can
+        # roll back and clear the poisoned transaction state.
         try:
             with self.env.cr.savepoint():
+                tool_data["status"] = "executing"
+                self.write({"body_json": tool_data})
+
+                # Execute tool and update message
                 result = self._execute_tool_with_context(name, args, thread_model)
                 if result is None:
                     raise UserError(f"No result returned from tool '{name}'")
@@ -235,24 +236,32 @@ class MailMessage(models.Model):
                 tool_data["result"] = result
                 self.write({"body_json": tool_data})
 
-                # Emit tool_succeeded event
-                yield {
-                    "type": "tool_succeeded",
-                    "tool_data": {
-                        "tool_call_id": tool_data.get("tool_call_id"),
-                        "tool_name": name,
-                        "arguments": self._parse_tool_arguments(args) if args else {},
-                        "status": "completed",
-                        "result": result,
-                    },
-                }
+            # Savepoint released — success path. Yields are OUTSIDE the
+            # savepoint so it's not held open during streaming.
+            yield {"type": "message_update", "message": self.to_store_format()}
+            yield {
+                "type": "tool_succeeded",
+                "tool_data": {
+                    "tool_call_id": tool_data.get("tool_call_id"),
+                    "tool_name": name,
+                    "arguments": self._parse_tool_arguments(args) if args else {},
+                    "status": "completed",
+                    "result": result,
+                },
+            }
 
         except Exception as e:
             _logger.error(f"Error executing tool {name}: {e}")
+            # Savepoint rolled back — transaction is clean.
             # Update tool data with error
             tool_data["status"] = "error"
             tool_data["error"] = str(e)
-            self.write({"body_json": tool_data})
+            try:
+                self.write({"body_json": tool_data})
+            except Exception:
+                # If this also fails, the transaction is truly broken —
+                # don't crash, just log and continue with the error event.
+                _logger.error("Failed to write error status to tool message")
 
             # Emit tool_failed event
             yield {
@@ -265,9 +274,6 @@ class MailMessage(models.Model):
                     "error": str(e),
                 },
             }
-
-        yield {"type": "message_update", "message": self.to_store_format()}
-        return self
 
     def _validate_tool_call(self, tool_call):
         """Validate tool call structure.

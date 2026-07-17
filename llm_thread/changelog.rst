@@ -1,3 +1,45 @@
+18.0.1.15.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **UI-1:** Thread run-state indicators (done/failed/cancelled) now
+  persist permanently instead of flashing for 3 seconds. Previously, the
+  indicators disappeared after 3s and were lost on page refresh. The
+  ``threadFinishedFlash`` method no longer has a time-based expiration; the
+  tick only runs for actively running threads (terminal states don't need
+  the tick). Added ``_hasTimeSensitiveRunState()`` call from
+  ``threadElapsedLabel`` to restart the tick when a new bus event arrives.
+* [FIX] **UI-2:** Indicator icons on the selected (active) thread are now
+  pure white on the red background. Previously, ``.text-success``,
+  ``.text-danger``, and ``.text-primary`` kept their default colors —
+  invisible on red. Now all indicator classes are overridden to white.
+* [FIX] **UI-3:** Jump arrows now navigate to BOTH user messages AND AI
+  answers. Previously, only AI answers were found (the
+  ``.o-llm-message-user`` class was confirmed present but the query
+  needed a fallback). Arrows moved from ``bottom: 88px`` to ``130px`` to
+  clear the composer + OCB scroll-to-bottom button. ``scrollIntoView``
+  uses ``block: "nearest"`` to prevent whitespace below the composer.
+* [ADD] **UI-4:** Sidebar is now resizable (drag the right edge).
+  Follows the König wiki pattern: CSS custom property
+  ``--llm-sidebar-width``, localStorage persistence
+  (``llm_thread.sidebar_width``), double-click to reset to 280px default.
+* [ADD] **UI-5:** Collapsed sidebar section state (Today/This Week/Older)
+  is now persisted in localStorage (``llm_thread.collapsed_buckets``).
+  Survives page refresh.
+
+18.0.1.14.0 (2026-07-16)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **BL-4:** Tag ACL fixed — users can now create AND edit tags
+  (was create-only, ``1,0,1,0`` → ``1,1,1,0``). Users could create
+  typo'd tags but not fix them.
+* [FIX] **BL-7:** ``_serverSearch`` now shows a one-time notification on
+  failure instead of silently falling back to client-side search.
+* [FIX] **BL-6:** ``formatDate`` fallback now uses OCB ``formatDateTime``
+  (was ``dt.toLocaleString()`` which used the browser locale instead of
+  Odoo's user language setting).
+* [ADD] **BL-8:** ``LLMBulkTagDialog`` now has an Add/Remove mode toggle.
+  Remove mode uses ``[3, id]`` (unlink) instead of ``[4, id]`` (link).
+
 18.0.1.13.9 (2026-07-15)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

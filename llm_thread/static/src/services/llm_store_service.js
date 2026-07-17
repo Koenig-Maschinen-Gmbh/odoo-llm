@@ -788,14 +788,17 @@ export const llmStoreService = {
             /**
              * Append the given tags to every selected thread (existing tags kept).
              * @param {Number[]} threadIds
-             * @param {Number[]} tagIds tag ids to append
+             * @param {Number[]} tagIds tag ids to append or remove
+             * @param {String} [mode="add"] "add" (4, id) or "remove" (3, id)
              */
-            async bulkTag(threadIds, tagIds) {
+            async bulkTag(threadIds, tagIds, mode = "add") {
                 if (!threadIds?.length || !tagIds?.length) {
                     return;
                 }
                 try {
-                    const tagCommands = tagIds.map((tagId) => [4, tagId]);
+                    const tagCommands = tagIds.map((tagId) =>
+                        mode === "remove" ? [3, tagId] : [4, tagId]
+                    );
                     await orm.write("llm.thread", threadIds, { tag_ids: tagCommands });
                     // Reload so each thread's ``tag_ids`` badges reflect the merge
                     // (the write returns no tag-detail dicts to merge in-place).

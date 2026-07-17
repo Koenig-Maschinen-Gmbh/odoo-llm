@@ -1,3 +1,18 @@
+18.0.1.8.0 (2026-07-17)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **Poisoned transaction root cause:** Guarded 3 ``cr.commit()`` calls
+  in ``generate_messages`` with ``koenig_no_auto_commit`` context flag. When
+  the ``dispatch_expert`` tool runs a sub-agent, the sub-thread's
+  ``generate_messages`` commits were destroying the master's tool-call
+  savepoint → "savepoint does not exist" → ``InFailedSqlTransaction`` for
+  all subsequent SQL → cascading error handler failure. The context flag
+  is set by ``koenig_ai_expert._run_subagent``.
+* [FIX] **Defense-in-depth:** Added outer savepoint in ``_execute_tool_call``
+  so that if the inner savepoint fails to clear a poisoned transaction, the
+  outer savepoint rollback clears it. The error handler's
+  ``create_tool_error_message`` (which needs SQL) can now execute safely.
+
 18.0.1.7.4 (2026-07-16)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

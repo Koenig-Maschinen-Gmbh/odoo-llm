@@ -461,7 +461,12 @@ class LLMThread(models.Model):
                         last_message,
                     )
                     last_message = tool_message
-                    self.env.cr.commit()
+                    # Guard: skip the commit when running inside a savepoint
+                    # (sub-agent path via dispatch_expert). Committing here
+                    # would destroy the master's tool-call savepoint, causing
+                    # "savepoint does not exist" → poisoned transaction.
+                    if not self.env.context.get("koenig_no_auto_commit"):
+                        self.env.cr.commit()
             else:
                 _logger.info(
                     f"Breaking loop. Last message role: {last_message.llm_role}, "
@@ -851,13 +856,17 @@ class LLMThread(models.Model):
                     author_id=False,
                 )
                 # Commit to ensure message is saved before tool execution
-                self.env.cr.commit()
+                # (skipped inside a savepoint — see line 464 comment)
+                if not self.env.context.get("koenig_no_auto_commit"):
+                    self.env.cr.commit()
                 yield {"type": "message_create", "message": message.to_store_format()}
             else:
                 # Update existing message with tool calls
                 message.write({"body_json": body_json})
                 # Commit to ensure update is saved
-                self.env.cr.commit()
+                # (skipped inside a savepoint — see line 464 comment)
+                if not self.env.context.get("koenig_no_auto_commit"):
+                    self.env.cr.commit()
                 yield {"type": "message_update", "message": message.to_store_format()}
         elif message and accumulated_content:
             # Final update for assistant message without tool calls
@@ -895,6 +904,13 @@ class LLMThread(models.Model):
     def _execute_tool_call(self, tool_call, assistant_message):
         """Execute a single tool call and return the tool message.
 
+        Uses an outer savepoint so that if the inner ``execute_tool_call``
+        savepoint fails to clear a poisoned transaction (e.g., an SQL error
+        occurred before the inner savepoint was created), the outer savepoint
+        rollback clears it. Without this, the error handler's
+        ``create_tool_error_message`` (which needs SQL) also fails with
+        ``InFailedSqlTransaction``, cascading into an un-recoverable state.
+
         Args:
             tool_call (dict): Tool call data from assistant message
             assistant_message (mail.message): The assistant message that contains the tool calls
@@ -906,21 +922,24 @@ class LLMThread(models.Model):
             mail.message: The tool message with execution result
         """
         try:
-            # Create tool message using the post_tool_call method
-            tool_msg = self.env["mail.message"].post_tool_call(
-                tool_call,
-                thread_model=self,
-            )
-            yield {"type": "message_create", "message": tool_msg.to_store_format()}
+            with self.env.cr.savepoint():
+                # Create tool message using the post_tool_call method
+                tool_msg = self.env["mail.message"].post_tool_call(
+                    tool_call,
+                    thread_model=self,
+                )
+                yield {"type": "message_create", "message": tool_msg.to_store_format()}
 
-            # Execute the tool call
-            result_msg = yield from tool_msg.execute_tool_call(thread_model=self)
+                # Execute the tool call (inner method has its own savepoint)
+                result_msg = yield from tool_msg.execute_tool_call(thread_model=self)
             return result_msg
 
         except Exception as e:
             _logger.error(f"Error executing tool call: {e}")
 
-            # Create error tool message using the new method
+            # The outer savepoint was rolled back — the transaction should be
+            # clean now, even if the inner savepoint failed to clear a poisoned
+            # state. Create the error message safely.
             try:
                 error_msg = self.env["mail.message"].create_tool_error_message(
                     tool_call,
