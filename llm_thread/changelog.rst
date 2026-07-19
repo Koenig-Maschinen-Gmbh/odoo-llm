@@ -1,3 +1,15 @@
+18.0.1.18.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **Optimistic user message UI (BUG-4 fix):** ``startLLMStreaming``
+  now inserts the user message into the mail store BEFORE creating the
+  ``EventSource``, so the user sees their message immediately. The
+  ``message_create`` SSE event handler removes the optimistic message
+  (negative temp ID) before adding the real one (with the real DB ID).
+  If the SSE fails, the optimistic message stays — reconciled on next
+  page reload. This eliminates the "I can't see my question initially"
+  symptom when reusing empty threads.
+
 18.0.1.17.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

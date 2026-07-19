@@ -144,6 +144,46 @@ export const llmStoreService = {
                 // set the terminal state for orchestration runs.
                 this._orchestrationThreads = this._orchestrationThreads || new Set();
                 this._orchestrationThreads.delete(threadId);
+
+                // BUG-4 fix: Optimistic UI — insert the user message into
+                // the mail store BEFORE creating the EventSource, so the user
+                // sees their message immediately. The real message arrives
+                // via the ``message_create`` SSE event (with the real DB ID).
+                // The ``message_create`` handler removes optimistic messages
+                // (negative temp IDs) for this thread before adding the real
+                // one. If the SSE fails, the optimistic message stays — it
+                // will be reconciled on next page reload (the server may have
+                // posted the real message even if the SSE event was lost).
+                if (message) {
+                    const tempId = -Date.now();
+                    const optimisticMsg = {
+                        id: tempId,
+                        model: "llm.thread",
+                        res_id: threadId,
+                        body: `<p>${message}</p>`,
+                        llm_role: "user",
+                        author_id: [
+                            mailStore.currentUser?.partnerId || false,
+                            mailStore.currentUser?.name || "",
+                        ],
+                        is_error: false,
+                        date: new Date().toISOString(),
+                        message_type: "comment",
+                    };
+                    mailStore.insert({ "mail.message": [optimisticMsg] }, { html: true });
+                    const thread = mailStore.Thread.get({
+                        model: "llm.thread",
+                        id: threadId,
+                    });
+                    const tempMsg = mailStore.Message.get(tempId);
+                    if (thread && tempMsg) {
+                        thread.messages.add(tempMsg);
+                    }
+                    // Track the temp ID so message_create can remove it.
+                    this._optimisticMsgIds = this._optimisticMsgIds || {};
+                    this._optimisticMsgIds[threadId] = tempId;
+                }
+
                 try {
                     let url = `/llm/thread/generate?thread_id=${threadId}`;
                     if (message) {
@@ -211,6 +251,25 @@ export const llmStoreService = {
             handleStreamMessage(threadId, data) {
                 switch (data.type) {
                     case "message_create": {
+                        // BUG-4 fix: remove the optimistic user message (if
+                        // any) for this thread before inserting the real
+                        // message. The optimistic message has a negative temp
+                        // ID tracked in _optimisticMsgIds.
+                        if (this._optimisticMsgIds?.[threadId] !== undefined) {
+                            const tempId = this._optimisticMsgIds[threadId];
+                            const thread = mailStore.Thread.get({
+                                model: "llm.thread",
+                                id: threadId,
+                            });
+                            if (thread) {
+                                const tempMsg = mailStore.Message.get(tempId);
+                                if (tempMsg) {
+                                    thread.messages.delete(tempMsg);
+                                }
+                            }
+                            delete this._optimisticMsgIds[threadId];
+                        }
+
                         // Handle all messages (user and AI) via EventSource
                         mailStore.insert({ "mail.message": [data.message] }, { html: true });
 
