@@ -1,6 +1,7 @@
 import contextlib
 import json
 import logging
+import threading
 
 import emoji
 import markdown2
@@ -100,7 +101,7 @@ class RelatedRecordProxy:
 class LLMThread(models.Model):
     _name = "llm.thread"
     _description = "LLM Chat Thread"
-    _inherit = ["mail.thread"]
+    _inherit = ["mail.thread", "bus.listener.mixin"]
     _order = "write_date DESC"
 
     name = fields.Char(
@@ -179,7 +180,14 @@ class LLMThread(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        """Set default title if not provided"""
+        """Set default title if not provided, then broadcast via bus.
+
+        After creation, each new thread is broadcast to its owner via
+        ``user._bus_send_store(thread, as_thread=True)`` →
+        ``mail.record/insert`` → WebSocket bus → the owner's sidebar
+        updates immediately (OCB-canonical pattern, ref:
+        ``discuss_channel.py:1183``).
+        """
         needs_unique_name = []
 
         for vals in vals_list:
@@ -209,6 +217,22 @@ class LLMThread(models.Model):
         for record, needs_update in zip(records, needs_unique_name):
             if needs_update:
                 record.name = f"New Chat #{record.id}"
+
+        # Broadcast new threads to their owners via the WebSocket bus so the
+        # sidebar updates immediately (OCB ref: discuss_channel.py:1183).
+        # Skip in test mode — TransactionCase forbids commits and the bus
+        # precommit hooks would raise.
+        if not getattr(threading.current_thread(), "testing", False):
+            for record in records:
+                if record.user_id:
+                    try:
+                        record.user_id._bus_send_store(record, as_thread=True)
+                    except Exception:
+                        _logger.debug(
+                            "Failed to broadcast new llm.thread %s via bus",
+                            record.id,
+                            exc_info=True,
+                        )
 
         return records
 
@@ -310,20 +334,58 @@ class LLMThread(models.Model):
         return None
 
     def _notify_thread(self, message, msg_vals=False, **kwargs):
-        """P-CHAT M6: no-op — AI chat threads never notify followers.
+        """P-CHAT M6: no follower notifications, but broadcast via bus for live UI.
 
         FULL OVERRIDE (no ``super``): an AI chat thread's "followers" are
         not meaningful — the asking user reads answers live through the
-        chat UI (SSE stream + the P-CHAT M3 bus reload), not through the
-        inbox/email notification pipeline. Calling ``super`` would create
+        chat UI (WebSocket bus + SSE stream), not through the inbox/email
+        notification pipeline. Calling ``super`` would create
         ``mail.notification`` / ``mail.mail`` / bus push records and email
         followers, which is exactly the spam an AI chat must avoid.
         Combined with ``mail_create_nosubscribe`` (set in ``message_post``)
         this guarantees zero follower notifications for any AI message
         (user / assistant / tool / error). Other ``mail.thread`` models
         are unaffected — this override is on ``llm.thread`` only.
+
+        **Bus broadcast (2026-07-19):** Although we skip ``super`` (no
+        email/inbox), we DO broadcast the new message via the WebSocket
+        bus so the chat UI updates live. This follows the OCB-canonical
+        pattern (ref: ``discuss_channel.py:649-658``): send the message
+        data via ``_bus_send_store`` (→ ``mail.record/insert``) and a
+        custom ``llm.thread/new_message`` event. The browser receives
+        both via WebSocket and inserts the message into the OWL store
+        → the message appears immediately without a manual reload.
         """
+        from odoo.addons.mail.tools.discuss import Store
+
+        # No super() — suppress email/inbox/follower notifications.
+        # But broadcast the new message via the WebSocket bus for live UI.
+        try:
+            # mail.record/insert — inserts message into the OWL store
+            self._bus_send_store(message)
+            # llm.thread/new_message — custom event for the JS to trigger
+            # reloadThreadMessages as a belt-and-suspenders fallback
+            payload = {"data": Store(message).get_result(), "id": self.id}
+            self._bus_send("llm.thread/new_message", payload)
+        except Exception:
+            _logger.debug(
+                "Failed to broadcast llm.thread message %s via bus",
+                message.id if message else None,
+                exc_info=True,
+            )
         return None
+
+    def _bus_channel(self):
+        """Route bus events to the thread owner's partner channel.
+
+        This follows the OCB delegation pattern (ref:
+        ``discuss_channel_member.py:244`` — delegates to partner). Every
+        authenticated user is auto-subscribed to their own partner channel
+        (``ir_websocket._build_bus_channel_list`` line 70), so sending to
+        ``user_id.partner_id`` delivers to the owner's browser via WebSocket.
+        """
+        self.ensure_one()
+        return self.user_id.partner_id
 
     def _process_llm_body(self, body):
         """Process body content for LLM messages (markdown to HTML conversion).
@@ -875,9 +937,7 @@ class LLMThread(models.Model):
         if RunModel is not None:
             try:
                 runs = RunModel.sudo().search([("thread_id", "=", thread.id)])
-                expert_count = (
-                    sum(len(r.expert_run_ids) for r in runs) if runs else 0
-                )
+                expert_count = sum(len(r.expert_run_ids) for r in runs) if runs else 0
                 is_running = bool(
                     runs.filtered(lambda r: r.state in ("pending", "running"))
                 )

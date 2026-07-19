@@ -696,7 +696,7 @@ class LLMThread(models.Model):
         if final_answer:
             kwargs["append_messages"] = [
                 {
-                    "role": "user",
+                    "role": "system",
                     "content": (
                         "You now have enough information from the tools. Answer my "
                         "question directly and completely using the tool results "

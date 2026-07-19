@@ -11,9 +11,9 @@ import { deserializeDateTime } from "@web/core/l10n/dates";
  * Provides LLM-specific functionality without breaking mail components
  */
 export const llmStoreService = {
-    dependencies: ["orm", "mail.store", "notification"],
+    dependencies: ["orm", "mail.store", "notification", "bus_service"],
 
-    start(env, { orm, "mail.store": mailStore, notification }) {
+    start(env, { orm, "mail.store": mailStore, notification, bus_service }) {
         const llmStore = reactive({
             // NOTE: Threads are now loaded via standard mail.store, no need for separate Map
             // Map<id, LLMModel>
@@ -48,12 +48,6 @@ export const llmStoreService = {
             // Filled by the koenig_ai_orchestrator bus subscriber (the fork store
             // exposes the API; it does NOT know the bus channel name).
             threadRunState: {},
-
-            // König-specific: callback set by orchestration_bus_service.js
-            // to handle SSE-delivered bus events (e.g. run_paused opens the
-            // approval dialog). The fork stays generic — it only invokes the
-            // callback if it has been set.
-            _onSSEOrchestrationEvent: null,
 
             // Computed properties - using mailStore as source of truth
             get activeLLMThread() {
@@ -137,13 +131,6 @@ export const llmStoreService = {
                     finishedAt: null,
                     error: false,
                 });
-                // Track whether this stream is an orchestration run. If so,
-                // the SSE ``done`` event just means the stream is finished
-                // (the background job was dispatched) — NOT that the AI
-                // response is complete. The bus events (run_done, run_failed)
-                // set the terminal state for orchestration runs.
-                this._orchestrationThreads = this._orchestrationThreads || new Set();
-                this._orchestrationThreads.delete(threadId);
 
                 // BUG-4 fix: Optimistic UI — insert the user message into
                 // the mail store BEFORE creating the EventSource, so the user
@@ -345,12 +332,22 @@ export const llmStoreService = {
 
                     case "done":
                         this.stopStreaming(threadId);
-                        // P-UX Item 3: set terminal state for the done flash
-                        // — BUT only for direct SSE streaming. For orchestration
-                        // runs, the ``done`` event just means the SSE stream is
-                        // finished (the background job was dispatched). The bus
-                        // events (run_done, run_failed) set the terminal state.
-                        if (!this._orchestrationThreads?.has(threadId)) {
+                        // SSE stream finished. For orchestration threads,
+                        // ``done`` just means "the SSE stream ended" (the
+                        // background job was dispatched) — NOT "the AI is
+                        // done answering". Do NOT set a terminal state; the
+                        // background job will send ``run_done`` via the
+                        // WebSocket bus to set the terminal state. For direct
+                        // (non-orchestration) threads, ``done`` means the
+                        // response is complete — set the terminal state.
+                        {
+                            const current = this.getThreadRunState(threadId);
+                            if (current && current.orchestration) {
+                                // Orchestration thread — leave state as
+                                // "running" (set by orchestration_started).
+                                // The bus event or 60s poll will reconcile.
+                                break;
+                            }
                             this.setThreadRunState(threadId, {
                                 state: "done",
                                 label: "Done",
@@ -361,11 +358,18 @@ export const llmStoreService = {
 
                     case "orchestration_started":
                         // The orchestrator dispatched a background job.
-                        // Mark this thread as orchestration-mode so the
-                        // ``done`` SSE event doesn't set a terminal state
-                        // (the bus events handle that for orchestration runs).
-                        this._orchestrationThreads = this._orchestrationThreads || new Set();
-                        this._orchestrationThreads.add(threadId);
+                        // Progress is delivered via the WebSocket bus
+                        // (orchestration_bus_service.js subscriber).
+                        // Set the thread to "running" and flag it as an
+                        // orchestration thread so the SSE ``done`` event
+                        // below does NOT prematurely set a terminal state.
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: "Working...",
+                            error: false,
+                            run_id: data.run_id || null,
+                            orchestration: true,
+                        });
                         break;
 
                     case "tool_called":
@@ -374,37 +378,6 @@ export const llmStoreService = {
                         // No-op: handled via message_update
                         console.log("[LLM] no-op event:", data.type);
                         break;
-
-                    case "bus_event": {
-                        // A progress event from the background orchestration run,
-                        // delivered via the SSE progress loop (continuous SSE
-                        // channel — no WebSocket dependency). The payload is the
-                        // same format as the bus event payload.
-                        this._handleOrchestrationBusEvent(threadId, data.event || {});
-                        // Allow König-specific services to handle SSE-delivered
-                        // bus events (e.g. run_paused opens the approval dialog).
-                        // The fork stays generic — the callback is set by the
-                        // König orchestration_bus_service.js.
-                        if (this._onSSEOrchestrationEvent) {
-                            this._onSSEOrchestrationEvent(threadId, data.event || {});
-                        }
-                        break;
-                    }
-
-                    case "run_terminal": {
-                        // The run reached a terminal state — the SSE progress
-                        // loop is about to close. Set the terminal state and
-                        // reload messages so the final answer appears.
-                        this.stopStreaming(threadId);
-                        const terminalState = data.state || "done";
-                        this.setThreadRunState(threadId, {
-                            state: terminalState,
-                            label: data.message || terminalState,
-                            error: data.error || terminalState === "failed",
-                        });
-                        this.reloadThreadMessages(threadId);
-                        break;
-                    }
 
                     default:
                         console.warn("Unknown stream message type:", data.type);
@@ -687,10 +660,18 @@ export const llmStoreService = {
                  * NOT call the interaction service — that is handled by the
                  * König ``orchestration_bus_service.js`` subscriber (which
                  * has access to the interaction service).
+                 *
+                 * ``run_id`` tracking (P1 fix 2026-07-19): the run_id is
+                 * stored in threadRunState so the 60s safety-net poll can
+                 * skip stale runs (old completed runs must NOT override the
+                 * current run's running state). ``run_started`` sets a fresh
+                 * run_id; all subsequent events for the same run carry the
+                 * same run_id and are applied. Terminal events clear it.
                  */
                 const data = payload || {};
                 const event = data.event;
                 const message = data.message;
+                const runId = data.run_id || data.task_id || null;
                 // Normalize task_* events to run_* for backward compat.
                 const normalizedEvent =
                     event && event.startsWith("task_") ? "run_" + event.substring(5) : event;
@@ -702,12 +683,14 @@ export const llmStoreService = {
                             startedAt: Date.now(),
                             finishedAt: null,
                             error: false,
+                            run_id: runId,
                         });
                         break;
                     case "expert_dispatched":
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Working...",
+                            run_id: runId,
                         });
                         break;
                     case "expert_completed":
@@ -715,6 +698,7 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Working...",
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -723,6 +707,7 @@ export const llmStoreService = {
                             state: "done",
                             label: message || "Done",
                             error: false,
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -731,6 +716,7 @@ export const llmStoreService = {
                             state: "failed",
                             label: message || "Failed",
                             error: true,
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -739,6 +725,7 @@ export const llmStoreService = {
                             state: "cancelled",
                             label: message || "Cancelled",
                             error: false,
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -747,6 +734,7 @@ export const llmStoreService = {
                             state: "killed",
                             label: message || "Killed",
                             error: false,
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -755,6 +743,7 @@ export const llmStoreService = {
                             state: "timed_out",
                             label: message || "Timed out",
                             error: false,
+                            run_id: runId,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -763,6 +752,7 @@ export const llmStoreService = {
                             state: "paused",
                             label: message || "Awaiting approval",
                             error: false,
+                            run_id: runId,
                         });
                         break;
                     case "run_resumed":
@@ -770,6 +760,7 @@ export const llmStoreService = {
                             state: "running",
                             label: message || "Resuming...",
                             error: false,
+                            run_id: runId,
                         });
                         break;
                     default:
@@ -1041,6 +1032,18 @@ export const llmStoreService = {
                 this.eventSources.clear();
                 this.streamingThreads.clear();
             },
+        });
+
+        // Subscribe to llm.thread/new_message bus events for live message
+        // delivery (OCB-canonical pattern, ref: discuss_channel.py:649-658 +
+        // discuss_core_common_service.js:46-52). When a new message is posted
+        // (by user OR background job), the Python _notify_thread broadcasts
+        // via bus.bus._sendone → WebSocket → this subscriber inserts the
+        // message data into the OWL store → the message appears immediately.
+        bus_service.subscribe("llm.thread/new_message", (payload) => {
+            if (payload && payload.data) {
+                mailStore.insert(payload.data, { html: true });
+            }
         });
 
         // Initialize LLM data after mailStore is ready (which calls init_messaging)

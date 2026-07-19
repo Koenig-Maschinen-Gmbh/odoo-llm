@@ -1,3 +1,56 @@
+18.0.1.21.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **SSE ``done`` event no longer prematurely sets orchestration threads
+  to "done".** The ``orchestration_started`` SSE event now sets
+  ``threadRunState`` to "running" with an ``orchestration: true`` flag. The
+  ``done`` event checks this flag — if true, it only stops streaming without
+  setting a terminal state. The background job's ``run_done`` bus event sets
+  the terminal state later. Previously, the SSE ``done`` event (sent by the
+  controller's ``finally`` block after the orchestration generator exhausts)
+  set the thread to "done" immediately after the background job was
+  dispatched — before the job produced any result. This caused the "status
+  shows OK but no result" symptom.
+
+18.0.1.20.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **``run_id`` tracking in ``threadRunState``:** the
+  ``_handleOrchestrationBusEvent`` and ``setThreadRunState`` methods now
+  track ``run_id`` (from ``payload.run_id``) in the per-thread run state.
+  This fixes the status indicator jumping erratically
+  (``done → ! → error → done``): the 60s safety-net poll in
+  ``orchestration_bus_service.js`` was overriding the current run's
+  ``running`` state with terminal states from old completed runs on the
+  same thread. Now the poll skips stale runs (``run_id`` mismatch).
+  OCB reference: ``discuss_channel.py:649-658`` (per-message bus delivery).
+
+18.0.1.19.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **OCB-canonical live-update architecture:** ``llm.thread`` now
+  inherits ``bus.listener.mixin`` and broadcasts new threads + new
+  messages via the WebSocket bus (``_bus_send_store`` →
+  ``mail.record/insert``). New threads appear in the sidebar immediately;
+  new messages (from user OR background job) appear without a manual
+  reload. OCB reference: ``discuss_channel.py:1183`` (new channel),
+  ``discuss_channel.py:649-658`` (new message).
+
+* [IMP] **SSE polling loop removed for orchestration runs:** the
+  ``_stream_orchestration_progress`` method (which held an HTTP worker
+  for the entire background run duration via a ``while True`` +
+  ``time.sleep(1)`` polling loop) has been removed. Orchestration
+  progress is now delivered exclusively via the WebSocket bus. SSE is
+  kept ONLY for direct LLM token streaming. The ``done`` SSE event now
+  always sets terminal state (the ``_orchestrationThreads`` conditional
+  is removed). The ``bus_event`` and ``run_terminal`` SSE cases are
+  removed. The ``_onSSEOrchestrationEvent`` callback is removed.
+
+* [IMP] **10s poll reduced to 60s safety net:** the RPC poll fallback
+  in ``orchestration_bus_service.js`` is reduced from 10s to 60s. The
+  WebSocket bus is now the PRIMARY delivery mechanism; the poll is a
+  minimal safety net for dev mode (``workers=0``, no WebSocket).
+
 18.0.1.18.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

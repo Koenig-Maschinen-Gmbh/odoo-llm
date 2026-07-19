@@ -1,3 +1,15 @@
+18.0.1.11.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **``final_answer`` nudge role: ``user`` → ``system``.** The nudge
+  appended by ``_prepare_chat_kwargs`` when ``final_answer=True`` used
+  ``role: "user"``. When the last message in history was a ``tool`` result,
+  this created an invalid ``user`` after ``tool`` sequence, causing a 400
+  "Unexpected role 'user' after role 'tool'" API error. Changed to
+  ``role: "system"`` — system messages can appear anywhere in the OpenAI
+  message sequence. This fixes the ``media_describe`` expert's 9 consecutive
+  failures + circuit breaker block.
+
 18.0.1.10.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
