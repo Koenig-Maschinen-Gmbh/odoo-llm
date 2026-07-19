@@ -1,3 +1,17 @@
+18.0.1.12.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **``_handle_non_streaming_response``: guard against non-dict provider
+  response.** Some providers (observed with the Mistral provider used by the
+  ``media_describe`` expert) return a raw string instead of a dict on edge
+  cases (empty response, rate-limit fallback). The unguarded
+  ``response.get("content", "")`` raised ``AttributeError: 'str' object has
+  no attribute 'get'``, which propagated as an expert failure. The fix adds
+  an ``isinstance(response, dict)`` guard mirroring the existing guard at
+  line 823 in ``_llm_fold_into_summary``, treating a non-dict response as
+  plain content. Fixes 3 of the 5 remaining historical ``media_describe``
+  expert failures.
+
 18.0.1.11.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

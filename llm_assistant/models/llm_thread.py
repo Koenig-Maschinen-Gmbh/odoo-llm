@@ -959,10 +959,30 @@ class LLMThread(models.Model):
         return message
 
     def _handle_non_streaming_response(self, response):
-        """Handle non-streaming response from LLM provider."""
-        # Extract content and tool calls from response
-        content = response.get("content", "")
-        tool_calls = response.get("tool_calls", [])
+        """Handle non-streaming response from LLM provider.
+
+        Guards against a provider ``chat()`` call that returns a raw string
+        instead of a dict (observed with the Mistral provider used by the
+        ``media_describe`` expert — root cause of the 3 historical
+        ``"'str' object has no attribute 'get'"`` expert failures). Mirrors
+        the ``isinstance(result, dict)`` guard already present at line 823
+        in ``_llm_fold_into_summary``.
+        """
+        # Extract content and tool calls from response. Some providers
+        # return a raw string instead of a dict on edge cases (empty
+        # response, rate-limit fallback). Guard with isinstance to avoid
+        # AttributeError cascading into an expert failure.
+        if not isinstance(response, dict):
+            _logger.warning(
+                "llm_assistant: non-streaming response was %s, expected dict — "
+                "treating as plain content",
+                type(response).__name__,
+            )
+            content = str(response) if response else ""
+            tool_calls = []
+        else:
+            content = response.get("content", "")
+            tool_calls = response.get("tool_calls", [])
 
         if not content and not tool_calls:
             content = "No response from model"
