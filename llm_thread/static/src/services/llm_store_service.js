@@ -49,6 +49,12 @@ export const llmStoreService = {
             // exposes the API; it does NOT know the bus channel name).
             threadRunState: {},
 
+            // König-specific: callback set by orchestration_bus_service.js
+            // to handle SSE-delivered bus events (e.g. run_paused opens the
+            // approval dialog). The fork stays generic — it only invokes the
+            // callback if it has been set.
+            _onSSEOrchestrationEvent: null,
+
             // Computed properties - using mailStore as source of truth
             get activeLLMThread() {
                 // Check if current active thread in mail.store is an LLM thread
@@ -316,6 +322,13 @@ export const llmStoreService = {
                         // channel — no WebSocket dependency). The payload is the
                         // same format as the bus event payload.
                         this._handleOrchestrationBusEvent(threadId, data.event || {});
+                        // Allow König-specific services to handle SSE-delivered
+                        // bus events (e.g. run_paused opens the approval dialog).
+                        // The fork stays generic — the callback is set by the
+                        // König orchestration_bus_service.js.
+                        if (this._onSSEOrchestrationEvent) {
+                            this._onSSEOrchestrationEvent(threadId, data.event || {});
+                        }
                         break;
                     }
 

@@ -1,3 +1,21 @@
+18.0.1.17.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **SSE error message posting (regression):** the broad ``except
+  Exception`` in ``_generate_assistant_response`` that posted an error
+  message to the thread was removed in 18.0.1.16.0 (retry refactor). The
+  SSE controller's ``except Exception`` handler now restores this behavior:
+  it rolls back any poisoned transaction, posts an error message via
+  ``_post_error_message``, commits, and then sends the error SSE event.
+  Best-effort — non-fatal if the cursor is too poisoned to post.
+* [ADD] **SSE callback hook:** ``llmStore._onSSEOrchestrationEvent`` is a
+  generic hook slot (initially ``null``) that König-specific services can
+  set to handle SSE-delivered bus events. The ``handleStreamMessage``
+  ``bus_event`` case calls this callback after the shared
+  ``_handleOrchestrationBusEvent`` handler. This enables the König
+  ``orchestration_bus_service.js`` to handle ``run_paused`` events
+  delivered via SSE (dev mode, no WebSocket).
+
 18.0.1.16.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

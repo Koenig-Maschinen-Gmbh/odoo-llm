@@ -68,7 +68,28 @@ class LLMThreadController(http.Controller):
                 _logger.exception(
                     f"Error in llm_thread_generate for thread {thread_id}: {e}",
                 )
-                # Lock will be automatically released by context manager
+                # Post error message to thread so the user sees it in the
+                # chat history. Restores the behavior removed when the broad
+                # except Exception was removed from _generate_assistant_response.
+                # Orchestration runs handle their own error posting in _execute.
+                # Best-effort — non-fatal if the cursor is too poisoned to post.
+                try:
+                    cr.rollback()
+                    thread = env["llm.thread"].browse(int(thread_id))
+                    _error_msg, error_event = thread._post_error_message(e)
+                    cr.commit()
+                    if client_connected:
+                        success = yield from cls._safe_yield(
+                            f"data: {json.dumps(error_event, default=str)}\n\n".encode(),
+                        )
+                        if not success:
+                            client_connected = False
+                except Exception:
+                    _logger.debug(
+                        "Failed to post error message to thread %s",
+                        thread_id,
+                        exc_info=True,
+                    )
 
                 if client_connected:
                     success = yield from cls._safe_yield(
