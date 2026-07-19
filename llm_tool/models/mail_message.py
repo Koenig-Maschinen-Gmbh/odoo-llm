@@ -262,7 +262,14 @@ class MailMessage(models.Model):
                 # don't crash, just log and continue with the error event.
                 _logger.error("Failed to write error status to tool message")
 
-            # Emit tool_failed event
+            # Emit tool_failed event.
+            # NOTE: ``exception`` carries the actual exception object so the
+            # koenig_ai_core telemetry hook can classify it (error_type +
+            # traceback). The hook POPS this key before re-yielding, so it
+            # never reaches the SSE serializer (json.dumps(default=str) would
+            # otherwise emit a redundant str(e) field). This key is NOT
+            # written to body_json (the body_json tool_data dict above is a
+            # separate object from this yielded event dict).
             yield {
                 "type": "tool_failed",
                 "tool_data": {
@@ -271,6 +278,7 @@ class MailMessage(models.Model):
                     "arguments": self._parse_tool_arguments(args) if args else {},
                     "status": "error",
                     "error": str(e),
+                    "exception": e,
                 },
             }
 

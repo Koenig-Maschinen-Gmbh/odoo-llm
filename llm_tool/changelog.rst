@@ -1,3 +1,18 @@
+18.0.4.3.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **Telemetry self-healing Phase A:** the ``tool_failed`` event in
+  ``execute_tool_call`` now carries ``"exception": e`` (the actual
+  exception object) alongside the existing ``"error": str(e)``. The
+  koenig_ai_core telemetry hook (``mail_message_tool_telemetry.py``) pops
+  this key before re-yielding so it never reaches the SSE serializer
+  (``json.dumps(default=str)`` would otherwise emit a redundant
+  ``str(e)`` field). The exception object travels only between the two
+  Python layers and enables structured error classification
+  (``_classify_error`` → ``error_type`` + ``error_traceback``) in the
+  telemetry row. Additive — existing consumers of ``tool_failed`` that
+  only read ``tool_data["error"]`` are unaffected.
+
 18.0.4.2.0 (2026-07-17)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
