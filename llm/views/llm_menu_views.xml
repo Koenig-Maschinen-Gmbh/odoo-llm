@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
     <!-- König Intelligence — root app menu (was "LLM").
-         Brand name, never translated. -->
+         Brand name, never translated.
+         Sequence 5 puts the app second in the app drawer, right after
+         Discuss (sequence 5, lower menu id wins the tie-break) and
+         ahead of Messages (sequence 6). -->
     <menuitem
         id="menu_llm_root"
         name="König Intelligence"
         web_icon="llm,static/description/icon.svg"
-        sequence="100"
+        sequence="5"
     />
 
     <!-- Configuration Menu (visible to ALL users; items are group-gated) -->

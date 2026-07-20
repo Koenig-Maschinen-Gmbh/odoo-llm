@@ -1,3 +1,10 @@
+18.0.1.8.2 (2026-07-20)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] App drawer order: root menu sequence 100 -> 5 so
+  'Koenig Intelligence' is the second app, right after Discuss
+  (sequence 5 tie broken by lower menu id) and ahead of Messages (6).
+
 18.0.1.8.1 (2026-07-16)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
