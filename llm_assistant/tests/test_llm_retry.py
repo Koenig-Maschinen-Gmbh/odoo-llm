@@ -19,7 +19,7 @@ Test isolation: ``time.sleep`` is mocked so the backoff delay is zero —
 tests run in milliseconds, not seconds.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from odoo.tests import TransactionCase, tagged
 
@@ -174,9 +174,10 @@ class TestIsTransientLLMError(TransactionCase):
 class TestLLMRetryLoop(TransactionCase):
     """Verify the retry loop in ``_generate_assistant_response``.
 
-    Uses non-streaming mode (``supports_streaming=False``) for simplicity —
-    the retry logic is identical for streaming, it just wraps ``model_id.chat()``
-    the same way.
+    Uses streaming mode (the default — ``supports_streaming`` defaults to
+    ``True`` when not a field on the model).  The retry logic is identical
+    for streaming and non-streaming; it wraps ``model_id.chat()`` the same
+    way.
     """
 
     @classmethod
@@ -391,4 +392,365 @@ class TestLLMRetryLoop(TransactionCase):
         # Reset for other tests
         self.env["ir.config_parameter"].sudo().set_param(
             "llm_assistant.backoff_base", 0.01
+        )
+
+
+# ---------------------------------------------------------------------------
+# Empty-response retry — reasoning-only / empty streams and non-streaming
+# ---------------------------------------------------------------------------
+
+
+@tagged("post_install", "-at_install")
+class TestEmptyResponseRetry(TransactionCase):
+    """Verify empty LLM responses (no content, no tool_calls) are retried.
+
+    Covers three root-cause scenarios that previously produced silent failures:
+
+    1. **Reasoning-only stream** — the stream completes but every chunk lacks a
+       ``content`` key (e.g. reasoning-only deltas).  Previously
+       ``_handle_streaming_response`` returned ``None`` silently; now it raises
+       ``TransientLLMError`` so the retry loop re-calls ``chat()``.
+    2. **Non-streaming empty dict** — ``chat(stream=False)`` returns
+       ``{"content": "", "tool_calls": []}``.  Previously
+       ``_handle_non_streaming_response`` fabricated a fake ``"No response from
+       model"`` assistant message (false success); now it raises
+       ``TransientLLMError``.
+    3. **Retries exhausted** — when every attempt is empty, the
+       ``TransientLLMError`` propagates after ``max_retries`` attempts instead
+       of silently returning ``None`` or a fake message.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.provider = (
+            cls.env["llm.provider"]
+            .sudo()
+            .create(
+                {
+                    "name": "Empty Response Test Provider",
+                    "service": "openai",
+                    "api_base": "https://test.example.com/v1",
+                    "api_key": "sk-test-key",
+                }
+            )
+        )
+        cls.model = (
+            cls.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "empty-response-test-model",
+                    "provider_id": cls.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        cls.thread = (
+            cls.env["llm.thread"]
+            .sudo()
+            .create(
+                {
+                    "name": "Empty response test thread",
+                    "provider_id": cls.provider.id,
+                    "model_id": cls.model.id,
+                }
+            )
+        )
+        cls.thread.with_context(mail_create_nosubscribe=True).message_post(
+            body="Hello, AI!",
+            llm_role="user",
+            author_id=cls.env.user.partner_id.id,
+        )
+        cls.env["ir.config_parameter"].sudo().set_param("llm_assistant.max_retries", 3)
+        cls.env["ir.config_parameter"].sudo().set_param(
+            "llm_assistant.backoff_base", 0.01
+        )
+
+    def _drain_generator(self, gen):
+        """Drain a generator, returning (result, events, exception)."""
+        events = []
+        exc = None
+        result = None
+        try:
+            while True:
+                events.append(next(gen))
+        except StopIteration as e:
+            result = e.value
+        except BaseException as e:  # noqa: BLE001 — catch GenerationCancelled (BaseException)
+            exc = e
+        return result, events, exc
+
+    def _run_generate(self, chat_side_effects, *, streaming=True):
+        """Run ``_generate_assistant_response`` with mocked ``model_id.chat``.
+
+        ``chat_side_effects`` entries:
+            - ``BaseException`` instance → raised by ``chat()``.
+            - ``str`` → wrapped as ``{"content": <str>}`` (content chunk/dict).
+            - ``dict`` → used as-is (a stream chunk in streaming mode, or the
+              full response dict in non-streaming mode).
+            - ``list`` → used as the full iterable of stream chunks (streaming
+              mode only).
+
+        ``streaming=False`` patches ``supports_streaming`` to ``False`` so the
+        non-streaming handler path is exercised; ``fake_chat`` then returns a
+        single dict instead of an iterable.
+        """
+
+        def fake_chat(self_model, **kwargs):
+            item = chat_side_effects.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            stream = kwargs.get("stream", True)
+            if stream:
+                if isinstance(item, list):
+                    return iter(item)
+                if isinstance(item, str):
+                    return iter([{"content": item}])
+                return iter([item])
+            if isinstance(item, str):
+                return {"content": item}
+            if isinstance(item, list):
+                return item[0] if item else {}
+            return item
+
+        LLMModel = type(self.env["llm.model"])
+        with (
+            patch.object(LLMModel, "chat", autospec=True, side_effect=fake_chat),
+            patch(
+                "odoo.addons.llm_assistant.models.llm_thread.time.sleep"
+            ) as mock_sleep,
+            patch.object(LLMModel, "supports_streaming", streaming, create=True),
+        ):
+            gen = self.thread._generate_assistant_response()
+            result, events, exc = self._drain_generator(gen)
+            return result, events, exc, mock_sleep
+
+    # -- Streaming: reasoning-only then success --------------------------------
+
+    def test_reasoning_only_stream_then_success(self):
+        """Reasoning-only chunks (no content) on attempt 1, content on attempt 2.
+
+        The first stream carries only a ``reasoning`` key — no ``content`` and
+        no ``tool_calls``.  Previously this returned ``None`` silently; now it
+        raises ``TransientLLMError``, the retry loop re-calls ``chat()``, and
+        the second attempt (with real content) succeeds.
+        """
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                [{"reasoning": "thinking..."}, {"reasoning": "more thinking..."}],
+                [{"content": "Hello back!"}],
+            ]
+        )
+        self.assertIsNone(exc, "Expected success after retry, got exception")
+        self.assertIsNotNone(result, "Expected an assistant message after retry")
+        mock_sleep.assert_called_once()
+        self.assertTrue(
+            any(e.get("type") == "message_create" for e in events),
+            "Expected at least one message_create event from the successful attempt",
+        )
+
+    def test_reasoning_only_stream_retries_exhausted(self):
+        """Reasoning-only chunks on every attempt → TransientLLMError propagates."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                [{"reasoning": "thinking..."}],
+                [{"reasoning": "thinking..."}],
+                [{"reasoning": "thinking..."}],
+            ]
+        )
+        self.assertIsNotNone(exc, "Expected exception after retries exhausted")
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertIsNone(result)
+        self.assertFalse(
+            any(e.get("type") == "message_create" for e in events),
+            "No message_create event should be yielded for empty responses",
+        )
+
+    def test_truly_empty_stream_retries_exhausted(self):
+        """An empty stream (zero chunks) on every attempt → error propagates."""
+        result, events, exc, mock_sleep = self._run_generate([[], [], []])
+        self.assertIsNotNone(exc, "Expected exception after retries exhausted")
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    # -- Non-streaming: empty dict then success --------------------------------
+
+    def test_non_streaming_empty_then_success(self):
+        """Empty non-streaming dict on attempt 1, content on attempt 2 → success.
+
+        The first response is ``{"content": "", "tool_calls": []}``.  Previously
+        this fabricated a fake ``"No response from model"`` message; now it
+        raises ``TransientLLMError`` and the retry succeeds.
+        """
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                {"content": "", "tool_calls": []},
+                {"content": "Hello back!"},
+            ],
+            streaming=False,
+        )
+        self.assertIsNone(exc, "Expected success after retry, got exception")
+        self.assertIsNotNone(result, "Expected an assistant message after retry")
+        mock_sleep.assert_called_once()
+        self.assertNotEqual(result.body, "No response from model")
+
+    def test_non_streaming_empty_retries_exhausted(self):
+        """Empty non-streaming dict on every attempt → TransientLLMError."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                {"content": "", "tool_calls": []},
+                {"content": "", "tool_calls": []},
+                {"content": "", "tool_calls": []},
+            ],
+            streaming=False,
+        )
+        self.assertIsNotNone(exc, "Expected exception after retries exhausted")
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertIsNone(result)
+
+    def test_non_streaming_no_content_key_then_success(self):
+        """A non-streaming dict with no content/tool_calls keys → retry → success."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                {},
+                {"content": "Hello back!"},
+            ],
+            streaming=False,
+        )
+        self.assertIsNone(exc)
+        self.assertIsNotNone(result)
+        mock_sleep.assert_called_once()
+
+    # -- Regression: normal content unchanged ----------------------------------
+
+    def test_normal_streaming_content_unchanged(self):
+        """A normal content stream on the first attempt → success, no retry."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [[{"content": "Hello back!"}]]
+        )
+        self.assertIsNone(exc)
+        self.assertIsNotNone(result)
+        mock_sleep.assert_not_called()
+
+    def test_normal_non_streaming_content_unchanged(self):
+        """A normal non-streaming content response → success, no retry."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [{"content": "Hello back!"}],
+            streaming=False,
+        )
+        self.assertIsNone(exc)
+        self.assertIsNotNone(result)
+        mock_sleep.assert_not_called()
+
+    def test_normal_tool_call_stream_unchanged(self):
+        """A tool-call stream on the first attempt → success, no retry.
+
+        The product tool-call path calls ``self.env.cr.commit()`` before tool
+        execution (in ``_handle_streaming_response``) to persist the assistant
+        message with tool_calls.  ``TransactionCase`` class-patches
+        ``cr.commit`` with a ``forbidden`` function that raises
+        ``AssertionError``, so we override it with a no-op mock for this test
+        only — the test transaction rolls back at the end regardless.
+        """
+        tool_calls = [{"id": "call_1", "name": "echo", "arguments": "{}"}]
+        mock_commit = MagicMock()
+        with patch.object(self.env.cr, "commit", mock_commit):
+            result, events, exc, mock_sleep = self._run_generate(
+                [[{"tool_calls": tool_calls}]]
+            )
+        self.assertIsNone(exc)
+        self.assertIsNotNone(result)
+        mock_sleep.assert_not_called()
+        self.assertTrue(result.has_tool_calls())
+        # The product path commits the assistant message before tool execution.
+        self.assertTrue(
+            mock_commit.called,
+            "cr.commit() must be called by the tool-call stream path",
+        )
+
+    # -- Cancellation semantics preserved --------------------------------------
+
+    def test_generation_cancelled_not_caught_by_empty_response_retry(self):
+        """``GenerationCancelled`` (BaseException) is NOT caught by the
+        empty-response retry ``except TransientLLMError`` block — it propagates.
+        """
+        result, events, exc, mock_sleep = self._run_generate(
+            [GenerationCancelled("user cancelled")]
+        )
+        self.assertIsNotNone(exc, "Expected GenerationCancelled to propagate")
+        self.assertIsInstance(exc, GenerationCancelled)
+        mock_sleep.assert_not_called()
+
+    # -- Streaming: error chunk before any content (no partial state) -----------
+
+    def test_error_chunk_before_content_then_success(self):
+        """An error chunk on attempt 1 (no content yet), content on attempt 2.
+
+        When an error chunk arrives before any assistant message was posted,
+        there is no partial state — safe to retry.  Previously this returned
+        ``None`` silently; now it raises ``TransientLLMError`` and the retry
+        succeeds.
+        """
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                [{"error": "server error mid-stream"}],
+                [{"content": "Hello back!"}],
+            ]
+        )
+        self.assertIsNone(exc, "Expected success after retry, got exception")
+        self.assertIsNotNone(result, "Expected an assistant message after retry")
+        mock_sleep.assert_called_once()
+        # The error event from attempt 1 was yielded
+        self.assertTrue(
+            any(e.get("type") == "error" for e in events),
+            "Expected an error event from the failed attempt",
+        )
+        # The successful attempt produced a message
+        self.assertTrue(
+            any(e.get("type") == "message_create" for e in events),
+            "Expected at least one message_create event from the successful attempt",
+        )
+
+    def test_error_chunk_before_content_retries_exhausted(self):
+        """Error chunks on every attempt (no content) → TransientLLMError."""
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                [{"error": "server error"}],
+                [{"error": "server error"}],
+                [{"error": "server error"}],
+            ]
+        )
+        self.assertIsNotNone(exc, "Expected exception after retries exhausted")
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertIsNone(result)
+
+    # -- Streaming: error chunk after partial content (existing semantics) ------
+
+    def test_error_chunk_after_partial_content_returns_partial(self):
+        """An error chunk after partial content returns the partial message.
+
+        When some content was already posted as an assistant message, a
+        subsequent error chunk returns the partial message — it cannot be
+        un-posted.  This is NOT retried (existing semantics preserved).
+        """
+        result, events, exc, mock_sleep = self._run_generate(
+            [
+                [{"content": "Hello"}, {"error": "connection lost"}],
+            ]
+        )
+        # No exception propagated — partial message is returned
+        self.assertIsNone(exc, "Expected partial message, not exception")
+        self.assertIsNotNone(result, "Expected a partial assistant message")
+        # No retry attempted
+        mock_sleep.assert_not_called()
+        # Content was partially streamed
+        self.assertIn("Hello", result.body)
+        # An error event was yielded
+        self.assertTrue(
+            any(e.get("type") == "error" for e in events),
+            "Expected an error event",
         )

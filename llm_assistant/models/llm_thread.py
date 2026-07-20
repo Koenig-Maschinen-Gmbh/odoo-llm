@@ -575,9 +575,10 @@ class LLMThread(models.Model):
           same "failed" path.
         - ``GenerationCancelled`` (``BaseException``) → never caught →
           propagates cleanly to the cancel handler.
-        - Mid-stream errors → propagate immediately (no retry for partial
-          state; ``_handle_streaming_response`` handles error chunks
-          internally and does not raise ``TransientLLMError``).
+        - Mid-stream errors after partial content → return partial message
+          (no retry; the partial message cannot be un-posted).
+        - Error chunk before any content → ``TransientLLMError`` (no
+          partial state, safe to retry).
 
         ``final_answer=True`` (used once the agentic loop hits
         ``tool_calls_max``) appends a transient nudge instructing the model to
@@ -630,20 +631,35 @@ class LLMThread(models.Model):
                     continue
                 raise
 
-            # Phase 2: process the response (NOT retryable).
-            # If the stream fails mid-way, the error propagates immediately —
-            # the message has already been partially posted and cannot be
-            # retried.  _handle_streaming_response handles error chunks
-            # internally (yields error events, returns the partial message).
-            if use_streaming:
-                assistant_message = yield from self._handle_streaming_response(
-                    raw_response,
-                    loop_control_check=loop_control_check,
-                )
-            else:
-                assistant_message = yield from self._handle_non_streaming_response(
-                    raw_response,
-                )
+            # Phase 2: process the response.
+            # An empty response (no content, no tool_calls) raises
+            # TransientLLMError from the handler BEFORE any assistant message
+            # is created, so there is no partial state — safe to retry the
+            # whole chat() call.  Other exceptions (mid-stream errors after a
+            # partial message was posted) propagate immediately.
+            try:
+                if use_streaming:
+                    assistant_message = yield from self._handle_streaming_response(
+                        raw_response,
+                        loop_control_check=loop_control_check,
+                    )
+                else:
+                    assistant_message = yield from self._handle_non_streaming_response(
+                        raw_response,
+                    )
+            except TransientLLMError as exc:
+                if attempt < max_retries - 1:
+                    wait = backoff_base * (2**attempt)
+                    _logger.warning(
+                        "LLM empty response (attempt %d/%d): %s — retrying in %ss",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
             return assistant_message
 
     def _is_transient_llm_error(self, exc):
@@ -928,6 +944,23 @@ class LLMThread(models.Model):
             # Handle errors
             if chunk.get("error"):
                 yield {"type": "error", "error": chunk["error"]}
+                if message is None:
+                    # Error chunk arrived before any content was posted —
+                    # no partial state exists, safe to retry the whole
+                    # chat() call.  Treat as transient so the retry loop
+                    # re-attempts; after retries exhausted the error
+                    # propagates to the orchestrator instead of silently
+                    # returning None (false success).
+                    raise TransientLLMError(
+                        _(
+                            "LLM stream error before any content: %s",
+                            chunk["error"],
+                        ),
+                    )
+                # Partial content was already posted — preserve existing
+                # semantics: return the partial message so the caller can
+                # decide what to do.  Mid-stream errors are NOT retried
+                # because the partial message cannot be un-posted.
                 return message
 
         # CRITICAL FIX: Create assistant message IMMEDIATELY if we have tool calls
@@ -956,6 +989,17 @@ class LLMThread(models.Model):
             message.write({"body": self._process_llm_body(accumulated_content)})
             yield {"type": "message_update", "message": message.to_store_format()}
 
+        if message is None:
+            # Stream completed with no content and no tool_calls (e.g.
+            # reasoning-only chunks that carry no ``content`` key).  No
+            # assistant message was created, so there is no partial state to
+            # preserve.  Treat as transient so the retry loop in
+            # _generate_assistant_response re-calls chat() with backoff;
+            # after retries are exhausted the error propagates to the
+            # orchestrator instead of silently returning None.
+            raise TransientLLMError(
+                _("LLM stream completed with no content and no tool calls."),
+            )
         return message
 
     def _handle_non_streaming_response(self, response):
@@ -985,7 +1029,14 @@ class LLMThread(models.Model):
             tool_calls = response.get("tool_calls", [])
 
         if not content and not tool_calls:
-            content = "No response from model"
+            # Provider returned no content and no tool_calls.  Do NOT
+            # fabricate a fake "No response from model" assistant message
+            # (false success).  Treat as transient so the retry loop
+            # re-calls chat(); after retries are exhausted the error
+            # propagates to the orchestrator.
+            raise TransientLLMError(
+                _("LLM returned no content and no tool calls."),
+            )
 
         # Prepare body_json with tool calls if present
         body_json = {"tool_calls": tool_calls} if tool_calls else None

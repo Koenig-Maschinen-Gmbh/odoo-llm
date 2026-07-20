@@ -1,6 +1,7 @@
 /** @odoo-module **/
 
 import { Thread } from "@mail/core/common/thread";
+import { useState } from "@odoo/owl";
 import { patch } from "@web/core/utils/patch";
 import { useService } from "@web/core/utils/hooks";
 
@@ -10,15 +11,15 @@ import { useService } from "@web/core/utils/hooks";
  */
 patch(Thread.prototype, {
   setup() {
-    super.setup();
-    this._llmStore = null;
-  },
-
-  get llmStore() {
-    if (!this._llmStore && this.isLLMThread) {
-      this._llmStore = useService("llm.store");
-    }
-    return this._llmStore;
+    super.setup(...arguments);
+    // P0: resolve the llm.store service during setup and wrap it in useState
+    // so the component re-renders when the store's reactive state changes.
+    // useService is a hook — it MUST be called unconditionally during setup,
+    // never lazily inside a getter (calling a hook outside setup breaks the
+    // OWL hook contract and silently drops reactivity / cleanup). The store
+    // is a singleton, so resolving it for non-LLM threads is cheap and the
+    // isLLMThread guards below keep all LLM-specific behavior gated.
+    this.llmStore = useState(useService("llm.store"));
   },
 
   /**

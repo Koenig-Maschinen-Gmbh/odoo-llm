@@ -5,7 +5,7 @@
     """,
     "description": "Configure AI assistants with specific roles, goals, and tools to enhance AI interactions, plus reusable prompt templates (text, YAML, JSON) with dynamic arguments, multi-step workflows, categories/tags, and context-simulation testing.",
     "category": "Productivity, Discuss",
-    "version": "18.0.1.12.0",
+    "version": "18.0.1.12.1",
     "depends": [
         "base",
         "mail",

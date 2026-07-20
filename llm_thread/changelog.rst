@@ -1,3 +1,54 @@
+18.0.1.22.1 (2026-07-20)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **OCB-canonical authorless bus notifications.** ``llm.thread``
+  overrides ``_message_compute_author`` to delegate to ``super()`` with
+  ``raise_on_email=False``, mirroring the OCB ``discuss.channel`` precedent
+  (``discuss_channel.py:696-697``). Progress/system messages
+  (``message_type='notification'``, ``subtype_xmlid='mail.mt_note'``) are
+  posted with ``author_id=False`` and no ``email_from`` — they have no human
+  sender. The base guard raised ``UserError`` on every authorless
+  notification. Safe because ``_notify_thread`` is already a no-op for the
+  email pipeline on ``llm.thread``; the bus broadcast (the real delivery
+  path) does not use ``email_from``. Regression test:
+  ``test_message_compute_author.py``.
+
+* [FIX] **Explicit reactive bus-message linking.** The
+  ``llm.thread/new_message`` WebSocket bus subscriber in
+  ``llm_store_service.js`` now links each inserted ``mail.message`` into the
+  target ``llm.thread``'s reactive ``messages`` collection (dedupe by id) via
+  the new pure ``linkMessagesToThread`` helper. Previously it only did
+  ``mailStore.insert(...)`` — the message landed in the store but the Thread
+  component (which renders ``thread.messages``) never re-rendered, so
+  background-posted answers only appeared after a manual reload. Mirrors the
+  OCB ``discuss.channel/new_message`` handler
+  (``discuss_core_common_service.js:147-160``).
+
+* [FIX] **Optimistic HTML escaping + ghost cleanup.** The optimistic user
+  message body is now built by ``buildOptimisticMessageBody``, which
+  HTML-escapes the raw user text (OCB ``escape``) so pasted markup
+  (``<script>``, ``&``) renders as text, not parsed/executed. The shared
+  ``_removeOptimisticMessage`` helper now runs on the SSE ``message_create``
+  path AND on the EventSource ``onerror`` / creation-failure paths, so a
+  ghost of the user's text never lingers after a dead stream. Helpers are
+  pure (Hoot-tested in ``llm_thread_messages.test.js``).
+
+* [FIX] **Setup-time reactive service usage.** ``thread_patch.js`` now
+  resolves the ``llm.store`` service during ``setup()`` and wraps it in
+  ``useState`` (``this.llmStore = useState(useService("llm.store"))``)
+  instead of calling ``useService`` lazily inside a getter. Calling a hook
+  outside ``setup()`` breaks the OWL hook contract and silently drops
+  reactivity / cleanup. The store is a singleton, so resolving it for
+  non-LLM threads is cheap; ``isLLMThread`` guards keep LLM-specific
+  behavior gated.
+
+* [FIX] **Per-thread teardown.** ``LLMChatClientAction.cleanup()`` now calls
+  ``stopStreaming(threadId)`` for the active thread only, instead of
+  ``this.llmStore.destroy()``. The store is a singleton shared across every
+  LLM thread and across background orchestration runs on other threads;
+  ``destroy()`` closed every active EventSource and cleared the whole
+  ``streamingThreads`` set, killing in-flight runs the user could not see.
+
 18.0.1.22.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

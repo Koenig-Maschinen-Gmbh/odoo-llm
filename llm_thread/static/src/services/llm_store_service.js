@@ -1,10 +1,15 @@
 /** @odoo-module **/
 
-import { _t } from "@web/core/l10n/translation";
+import {
+    buildOptimisticMessageBody,
+    linkMessagesToThread,
+    removeOptimisticMessageFromThread,
+} from "../utils/llm_thread_messages";
 import { Deferred } from "@web/core/utils/concurrency";
+import { _t } from "@web/core/l10n/translation";
+import { deserializeDateTime } from "@web/core/l10n/dates";
 import { reactive } from "@odoo/owl";
 import { registry } from "@web/core/registry";
-import { deserializeDateTime } from "@web/core/l10n/dates";
 
 /**
  * LLM Store Service - Integrates with existing mail.store
@@ -138,16 +143,24 @@ export const llmStoreService = {
                 // via the ``message_create`` SSE event (with the real DB ID).
                 // The ``message_create`` handler removes optimistic messages
                 // (negative temp IDs) for this thread before adding the real
-                // one. If the SSE fails, the optimistic message stays — it
-                // will be reconciled on next page reload (the server may have
-                // posted the real message even if the SSE event was lost).
+                // one. If the SSE fails (onerror) or EventSource creation
+                // throws, ``_removeOptimisticMessage`` drops the temp message
+                // too — ghosts never persist. If the server actually posted
+                // the real message despite the SSE failure, it is re-linked
+                // via the ``llm.thread/new_message`` bus subscriber or the
+                // next reload.
                 if (message) {
                     const tempId = -Date.now();
                     const optimisticMsg = {
                         id: tempId,
                         model: "llm.thread",
                         res_id: threadId,
-                        body: `<p>${message}</p>`,
+                        // P0: escape raw user text before building the
+                        // optimistic HTML body — pasted markup (e.g.
+                        // ``<script>`` or ``&``) must render as text, not be
+                        // parsed/executed. Mirrors OCB ``escape`` usage
+                        // (@web/core/utils/strings).
+                        body: buildOptimisticMessageBody(message),
                         llm_role: "user",
                         author_id: [
                             mailStore.currentUser?.partnerId || false,
@@ -191,6 +204,12 @@ export const llmStoreService = {
                     eventSource.onerror = (error) => {
                         console.error("EventSource error:", error);
                         this.stopStreaming(threadId);
+                        // P0: drop the optimistic temp message so a ghost of
+                        // the user's text does not linger forever after the
+                        // stream died. If the server actually posted the real
+                        // message, it is re-linked via the ``llm.thread/
+                        // new_message`` bus subscriber or the next reload.
+                        this._removeOptimisticMessage(threadId);
                         // P-UX Item 3: set terminal state for the failed flash.
                         this.setThreadRunState(threadId, {
                             state: "failed",
@@ -209,6 +228,10 @@ export const llmStoreService = {
                 } catch (error) {
                     console.error("Error starting stream:", error);
                     this.stopStreaming(threadId);
+                    // P0: EventSource creation failed — drop the optimistic
+                    // temp message so the ghost does not persist (no stream
+                    // means no ``message_create`` will ever reconcile it).
+                    this._removeOptimisticMessage(threadId);
                     // P-UX Item 3: set terminal state so the indicator
                     // doesn't stay "running" forever if EventSource
                     // creation fails.
@@ -235,27 +258,45 @@ export const llmStoreService = {
                 this.streamingThreads.delete(threadId);
             },
 
+            /**
+             * P0: remove the optimistic temp message tracked for ``threadId``
+             * from that thread's reactive messages collection, then clear the
+             * tracking. Idempotent — a no-op when no optimistic message is
+             * tracked. Called from the SSE ``message_create`` handler (the
+             * real message is arriving) AND from the EventSource error /
+             * start-failure paths (the stream died, so no real message will
+             * ever reconcile the ghost). Delegates the record-level work to
+             * the pure ``removeOptimisticMessageFromThread`` helper so the
+             * contract is unit-tested in Hoot.
+             */
+            _removeOptimisticMessage(threadId) {
+                const tempId = this._optimisticMsgIds?.[threadId];
+                if (tempId === undefined) {
+                    return;
+                }
+                const thread = mailStore.Thread.get({
+                    model: "llm.thread",
+                    id: threadId,
+                });
+                removeOptimisticMessageFromThread({
+                    thread,
+                    tempId,
+                    getMessage: (id) => mailStore.Message.get(id),
+                });
+                delete this._optimisticMsgIds[threadId];
+            },
+
             handleStreamMessage(threadId, data) {
                 switch (data.type) {
                     case "message_create": {
-                        // BUG-4 fix: remove the optimistic user message (if
-                        // any) for this thread before inserting the real
-                        // message. The optimistic message has a negative temp
-                        // ID tracked in _optimisticMsgIds.
-                        if (this._optimisticMsgIds?.[threadId] !== undefined) {
-                            const tempId = this._optimisticMsgIds[threadId];
-                            const thread = mailStore.Thread.get({
-                                model: "llm.thread",
-                                id: threadId,
-                            });
-                            if (thread) {
-                                const tempMsg = mailStore.Message.get(tempId);
-                                if (tempMsg) {
-                                    thread.messages.delete(tempMsg);
-                                }
-                            }
-                            delete this._optimisticMsgIds[threadId];
-                        }
+                        // P0: remove the optimistic user message (if any) for
+                        // this thread before inserting the real one. The
+                        // optimistic message has a negative temp id tracked in
+                        // _optimisticMsgIds. Delegates to the shared
+                        // _removeOptimisticMessage helper so the same cleanup
+                        // runs on the SSE error / start-failure paths too —
+                        // ghosts never persist.
+                        this._removeOptimisticMessage(threadId);
 
                         // Handle all messages (user and AI) via EventSource
                         mailStore.insert({ "mail.message": [data.message] }, { html: true });
@@ -1036,14 +1077,42 @@ export const llmStoreService = {
 
         // Subscribe to llm.thread/new_message bus events for live message
         // delivery (OCB-canonical pattern, ref: discuss_channel.py:649-658 +
-        // discuss_core_common_service.js:46-52). When a new message is posted
-        // (by user OR background job), the Python _notify_thread broadcasts
-        // via bus.bus._sendone → WebSocket → this subscriber inserts the
-        // message data into the OWL store → the message appears immediately.
+        // discuss_core_common_service.js:46-52, 147-160). When a new message
+        // is posted (by user OR background job), the Python _notify_thread
+        // broadcasts via bus.bus._sendone → WebSocket → this subscriber
+        // inserts the message data into the OWL store AND links each inserted
+        // mail.message into the target llm.thread's reactive messages
+        // collection (dedupe by id). The link step mirrors the SSE
+        // ``message_create`` path in handleStreamMessage and the OCB
+        // ``discuss.channel/new_message`` handler: without it the message
+        // lands in the store but the Thread component (which renders
+        // ``thread.messages``) never re-renders, so the answer only appears
+        // after a manual reload.
         bus_service.subscribe("llm.thread/new_message", (payload) => {
-            if (payload && payload.data) {
-                mailStore.insert(payload.data, { html: true });
+            if (!payload || !payload.data) {
+                return;
             }
+            // Insert should always be done before any other operation (OCB
+            // invariant: awaiting before insertion could overwrite newer
+            // state from more recent notifications).
+            mailStore.insert(payload.data, { html: true });
+            const threadId = payload.id;
+            const messages = payload.data["mail.message"];
+            if (!threadId || !messages?.length) {
+                return;
+            }
+            const thread = mailStore.Thread.get({
+                model: "llm.thread",
+                id: threadId,
+            });
+            if (!thread) {
+                return;
+            }
+            linkMessagesToThread({
+                thread,
+                messageIds: messages.map((m) => m.id),
+                getMessage: (id) => mailStore.Message.get(id),
+            });
         });
 
         // Initialize LLM data after mailStore is ready (which calls init_messaging)

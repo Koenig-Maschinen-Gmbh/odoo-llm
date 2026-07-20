@@ -375,6 +375,43 @@ class LLMThread(models.Model):
             )
         return None
 
+    def _message_compute_author(
+        self, author_id=None, email_from=None, raise_on_email=True
+    ):
+        """Override to allow authorless notification messages without a configured sender email.
+
+        LLM threads intentionally suppress email/inbox follower notifications
+        (see ``_notify_thread`` override — no ``super()``, no email pipeline).
+        Instead, messages are broadcast live via the WebSocket bus
+        (``_bus_send_store`` → ``mail.record/insert``).  Progress and system
+        messages (``message_type='notification'``, ``subtype_xmlid='mail.mt_note'``)
+        are posted with ``author_id=False`` and no ``email_from`` — they have no
+        human sender.  Without this override, ``mail.thread._message_compute_author``
+        raises ``UserError("Unable to send message, please configure the sender's
+        email address.")`` whenever ``email_from`` is empty and
+        ``raise_on_email=True`` (the default), which breaks every authorless
+        notification on ``llm.thread``.
+
+        The fix mirrors the OCB ``discuss.channel`` precedent
+        (ref: ``discuss_channel.py:696-697``): delegate to ``super()`` with
+        ``raise_on_email=False`` so that authorless messages are accepted
+        silently instead of raising.
+
+        This is safe because:
+
+        * ``_notify_thread`` is already a no-op for email — no ``mail.mail``
+          or ``mail.notification`` records are created, so a missing
+          ``email_from`` cannot cause an email-sending failure.
+        * The bus broadcast (the real delivery path) does not use
+          ``email_from`` at all.
+        * Callers that explicitly pass ``author_id`` or ``email_from``
+          (e.g. ``message_post`` with ``llm_role``) are unaffected —
+          ``super()`` still resolves those normally.
+        """
+        return super()._message_compute_author(
+            author_id=author_id, email_from=email_from, raise_on_email=False
+        )
+
     def _bus_channel(self):
         """Route bus events to the thread owner's partner channel.
 

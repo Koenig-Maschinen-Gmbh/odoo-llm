@@ -216,11 +216,21 @@ export class LLMChatClientAction extends Component {
   }
 
   /**
-   * Cleanup when component is destroyed
+   * Cleanup when component is destroyed.
+   *
+   * P0: stop only the ACTIVE thread's SSE stream — never destroy() the
+   * singleton llm.store service. The store is shared across every LLM thread
+   * (and across background orchestration runs that live on other threads);
+   * calling destroy() here would close every active EventSource and clear the
+   * whole streamingThreads set, killing in-flight runs the user cannot see.
+   * stopStreaming(threadId) closes just this thread's stream and leaves the
+   * service (and all other streams) intact.
    */
   cleanup() {
-    // Stop any streaming
-    this.llmStore.destroy();
+    const threadId = this._activeThreadId();
+    if (threadId) {
+      this.llmStore.stopStreaming(threadId);
+    }
   }
 }
 

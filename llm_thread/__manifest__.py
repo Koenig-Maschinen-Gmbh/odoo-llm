@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.22.0",
+    "version": "18.0.1.22.1",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -86,6 +86,9 @@ Contact: support@apexive.com
             "llm_thread/static/src/utils/llm_message_classify.js",
             # P-UX: date-bucket grouping helper — used by llm_sidebar.js
             "llm_thread/static/src/utils/llm_date_bucket.js",
+            # P0: optimistic-message lifecycle helpers (escape / link / remove)
+            # — used by llm_store_service.js
+            "llm_thread/static/src/utils/llm_thread_messages.js",
             # Patches - Safe extensions of mail components with conditional LLM logic
             "llm_thread/static/src/patches/composer_patch.js",
             "llm_thread/static/src/patches/composer_patch.xml",
@@ -112,6 +115,10 @@ Contact: support@apexive.com
             # P-UX — date-bucket grouping helper (pure function) + its Hoot suite.
             "llm_thread/static/src/utils/llm_date_bucket.js",
             "llm_thread/static/tests/llm_date_bucket.test.js",
+            # P0 — optimistic-message lifecycle helpers (pure functions) + Hoot
+            # suite. The util is bundled here too (assets_unit_tests is isolated).
+            "llm_thread/static/src/utils/llm_thread_messages.js",
+            "llm_thread/static/tests/llm_thread_messages.test.js",
         ],
     },
     "images": [

@@ -1,3 +1,34 @@
+18.0.1.12.1 (2026-07-20)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **Empty / reasoning-only LLM responses now retry and fail visibly
+  instead of silent ``None`` or fake success.** ``_handle_streaming_response``
+  raises ``TransientLLMError`` when the stream completes with no ``content``
+  and no ``tool_calls`` (e.g. reasoning-only deltas) — it previously returned
+  ``None``. ``_handle_non_streaming_response`` raises ``TransientLLMError``
+  when the response dict has no ``content`` and no ``tool_calls`` — it
+  previously fabricated an assistant message with body ``"No response from
+  model"`` (false success). The retry loop in ``_generate_assistant_response``
+  (18.0.1.10.0) now wraps the Phase 2 response-processing call too, so both
+  empty-response cases re-call ``chat()`` with exponential backoff; after
+  retries are exhausted the error propagates to ``_execute`` which marks the
+  run "failed" (not "done") with a clear message.
+
+* [FIX] **Error chunk before any content is now transient and retried.** When
+  an ``{"error": ...}`` chunk arrives before any assistant message was posted
+  (no partial state), ``_handle_streaming_response`` raises
+  ``TransientLLMError`` so the retry loop re-attempts. An error chunk AFTER
+  partial content was posted still returns the partial message (existing
+  semantics preserved — the partial message cannot be un-posted).
+
+* [ADD] **Regression coverage:** new ``TestEmptyResponseRetry`` suite covers
+  reasoning-only-then-success, empty-then-success (streaming + non-streaming),
+  retries-exhausted, error-chunk-before-content (retry + exhausted),
+  error-chunk-after-partial (returns partial, no retry), normal
+  content/tool-call paths unchanged, and ``GenerationCancelled``
+  (``BaseException``) propagating through the empty-response retry
+  ``except TransientLLMError`` block.
+
 18.0.1.12.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
