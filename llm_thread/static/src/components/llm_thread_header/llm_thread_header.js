@@ -235,7 +235,7 @@ export class LLMThreadHeader extends Component {
       const models = Array.from(this.llmStore.llmModels.values()).filter(
         (m) => m.provider_id[0] === provider.id
       );
-      const defaultModel = models.find((m) => m.is_default) || models[0];
+      const defaultModel = models.find((m) => m.default) || models[0];
 
       const updateData = {
         provider_id: provider.id,

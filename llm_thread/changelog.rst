@@ -1,3 +1,14 @@
+18.0.1.22.0 (2026-07-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] Thread header: provider switch now selects the provider's *default*
+  model (the store loads the field ``default``; the header read the
+  non-existent ``is_default`` and silently fell back to ``models[0]``), and
+  the "Default" badge in the model dropdown now renders (same one-word fix
+  in the XML). RESEARCH_2026-07-19_FULL_SYSTEM_REVIEW §6.5. No Hoot component
+  test infra exists for this component yet — component tests are a P1 backlog
+  item (noted in the research doc).
+
 18.0.1.21.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

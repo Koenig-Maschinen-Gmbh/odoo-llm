@@ -141,7 +141,7 @@
                     class="d-flex justify-content-between align-items-center"
                   >
                                         <span t-esc="model.name" />
-                                        <t t-if="model.is_default">
+                                        <t t-if="model.default">
                                             <span
                         class="badge bg-primary ms-2"
                       >Default</span>
