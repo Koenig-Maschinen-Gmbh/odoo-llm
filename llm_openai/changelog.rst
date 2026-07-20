@@ -1,3 +1,19 @@
+18.0.1.6.0 (2026-07-20)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] TEL-01: gated ``stream_options.include_usage`` in
+  ``openai_chat`` — only when the model's ``koenig_supports_stream_usage``
+  flag is True (default False; enable per model after a live probe).
+  Providers that support it emit a terminal usage-only chunk (choices
+  empty, ``chunk.usage`` present) with real token counts.
+* [KOENIG][ADD] TEL-01: terminal metadata chunks in
+  ``_openai_process_streaming_response`` — yields ``{'usage': {...}}`` on
+  the terminal usage-only chunk and ``{'finish_reason': str}`` at both
+  normal stream end AND after a terminal error yield. Existing yield
+  shapes (content, reasoning, tool_calls, error) are unchanged. The
+  consumer (``_handle_streaming_response``) reads these to record real
+  token counts + finish reason on the LLM trace.
+
 18.0.1.5.0 (2026-07-09)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

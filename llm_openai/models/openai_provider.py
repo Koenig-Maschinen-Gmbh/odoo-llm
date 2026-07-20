@@ -216,6 +216,17 @@ class LLMProvider(models.Model):
         if effort:
             params.setdefault("extra_body", {})["reasoning"] = {"effort": effort}
 
+        # TEL-01: request real token usage in the stream. OpenAI-compatible
+        # providers that support ``stream_options.include_usage`` emit a
+        # terminal usage-only chunk (choices empty, ``chunk.usage`` present).
+        # Gated by the per-model capability flag (default False) — enable only
+        # after a live probe (OpenAI/IONOS/Scaleway support it; unknown
+        # providers may reject the param). The consumer
+        # (``_handle_streaming_response``) reads the terminal usage chunk to
+        # record real (not estimated) token counts on the LLM trace.
+        if stream and getattr(model, "koenig_supports_stream_usage", False):
+            params["stream_options"] = {"include_usage": True}
+
         # Add tools if provided (OpenAI-specific formatting)
         if tools:
             formatted_tools = self.format_tools(tools)
@@ -317,10 +328,23 @@ class LLMProvider(models.Model):
             _logger.exception("Error processing OpenAI non-streaming response")
             return {"error": f"Error processing response: {e}"}
 
-    def _openai_process_streaming_response(self, response_stream):
-        """
-        Processes OpenAI stream and yields standardized dicts for start_thread_loop.
+    def _openai_process_streaming_response(self, response_stream):  # noqa: C901
+        """Processes OpenAI stream and yields standardized dicts for start_thread_loop.
+
         Yields: {'content': str} OR {'tool_calls': list} OR {'error': str}
+                OR {'reasoning': str} OR {'usage': dict} OR {'finish_reason': str}
+
+        TEL-01 terminal metadata chunks (additive — existing yields untouched):
+        - ``{'usage': {...}}``: yielded on the terminal usage-only chunk that
+          providers emit when ``stream_options.include_usage=True`` is set
+          (choices empty, ``chunk.usage`` present). Consumed by
+          ``_handle_streaming_response`` to record real (not estimated) token
+          counts on the LLM trace.
+        - ``{'finish_reason': str}``: yielded once at normal stream end AND
+          once after a terminal error yield, so the consumer captures the
+          provider's finish reason even when the stream aborted. Never
+          yielded from a ``finally:`` (the plan forbids it — a finally would
+          fire on every control-flow path including generator close).
         """
         assembled_tool_calls = {}
         final_tool_calls_list = []
@@ -329,6 +353,17 @@ class LLMProvider(models.Model):
 
         try:
             for chunk in response_stream:
+                # TEL-01: terminal usage-only chunk (choices empty + usage
+                # present). Emitted when stream_options.include_usage=True.
+                # Handle BEFORE the choice/delta logic (choices is empty so
+                # choice would be None and we'd `continue` without capturing
+                # the usage). Reuses _openai_extract_usage for shape normalization.
+                if not chunk.choices and getattr(chunk, "usage", None):
+                    usage = self._openai_extract_usage(chunk)
+                    if usage:
+                        yield {"usage": usage}
+                    continue
+
                 choice = chunk.choices[0] if chunk.choices else None
                 delta = choice.delta if choice else None
                 chunk_finish_reason = choice.finish_reason if choice else None
@@ -403,8 +438,24 @@ class LLMProvider(models.Model):
                         f"OpenAI stream had tool chunks but finished with reason '{finish_reason}'. Not yielding tool calls.",
                     )
 
+            # TEL-01: yield the terminal finish_reason at normal stream end.
+            # The consumer (_handle_streaming_response) records it on the
+            # LLM trace. Yielded here (NOT in a finally:) per the plan.
+            if finish_reason:
+                yield {"finish_reason": finish_reason}
+            _logger.info(
+                "openai stream end: finish=%s tools=%s",
+                finish_reason,
+                stream_has_tools,
+            )
+
         except Exception as e:
             yield {"error": f"Internal error processing stream: {e}"}
+            # TEL-01: yield finish_reason after a terminal error too, so the
+            # consumer captures what the provider reported before the error.
+            # Never in a finally: — explicit at this exit site only.
+            if finish_reason:
+                yield {"finish_reason": finish_reason}
 
     @api.model
     def _sanitize_tool_name(self, name):
