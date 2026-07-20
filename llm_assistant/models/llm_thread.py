@@ -557,6 +557,61 @@ class LLMThread(models.Model):
     def _generate_response(self, last_message):
         raise NotImplementedError
 
+    def _record_llm_call_trace(self, trace):
+        """Extension point: react to a completed provider attempt's trace.
+
+        No-op (logging) in the base fork; koenig overrides persist it
+        (``koenig.ai.llm.trace``). Called for EVERY attempt outcome (ok,
+        transient, fatal) by ``_finalize_llm_trace``. Returns None in the
+        fork; koenig overrides may return the trace record.
+
+        OCB hook precedent: ``mail_thread._get_customer_information``
+        (``OCB/addons/mail/models/mail_thread.py:2129-2138``) — "extension
+        point to subclasses". Fork hooks stay koenig-agnostic.
+
+        Never raises — telemetry must not break the observed path.
+        """
+        _logger.info(
+            "llm trace: thread=%s model=%s attempt=%s status=%s chunks=%s finish=%s",
+            self.id,
+            trace.get("model"),
+            trace.get("attempt"),
+            trace.get("status"),
+            trace.get("chunks"),
+            trace.get("finish_reason"),
+        )
+
+    def _finalize_llm_trace(self, request_trace, sink, status, exc):
+        """Merge request_trace + sink, set status/error, call the hook.
+
+        Called at the attempt boundary in ``_generate_assistant_response``
+        for all three outcomes (ok / transient / fatal). The hook
+        (``_record_llm_call_trace``) is itself wrapped in try/except +
+        debug log, so this method never raises into the observed path.
+
+        Sets ``error_class`` / ``error_message`` (capped 500) from ``exc``
+        when present. ``duration_ms`` is taken from the sink (set by the
+        handler's ``_fill_end``); when the handler never ran (chat raised
+        before any chunk), it stays 0 — the trace still records the
+        attempt + error class, which is the forensic value.
+        """
+        try:
+            trace = dict(request_trace)
+            trace.update(sink)
+            trace["status"] = status
+            if exc is not None:
+                trace["error_class"] = type(exc).__name__
+                try:
+                    msg = str(exc)
+                except Exception:  # noqa: BLE001 — never crash on a bad __str__
+                    msg = type(exc).__name__
+                if len(msg) > 500:
+                    msg = msg[:500] + "…"
+                trace["error_message"] = msg
+            self._record_llm_call_trace(trace)
+        except Exception:  # noqa: BLE001 — telemetry must never raise
+            _logger.debug("llm trace finalize failed", exc_info=True)
+
     def _generate_assistant_response(
         self, final_answer=False, *, loop_control_check=None
     ):
@@ -585,6 +640,12 @@ class LLMThread(models.Model):
         answer now without calling more tools — while keeping tools available,
         so models that emit native tool-call syntax as text when constrained
         still behave.
+
+        TEL-01: every attempt is traced. ``request_trace`` (fingerprint) is
+        built per attempt; ``sink`` is filled incrementally by the response
+        handler; ``_finalize_llm_trace`` fires at the attempt boundary for
+        all three outcomes (ok / transient / fatal). Capture is purely
+        additive — retry/raise semantics are byte-for-byte unchanged.
         """
         self.env.flush_all()
         message_history = self.get_llm_messages()
@@ -610,14 +671,42 @@ class LLMThread(models.Model):
             )
         )
 
+        model_su = self.sudo().model_id
         for attempt in range(max_retries):
+            # TEL-01: per-attempt request trace (fingerprint). Built inside
+            # the retry loop so each attempt gets its own row.
+            request_trace = {
+                "ts": fields.Datetime.to_string(fields.Datetime.now()),
+                "provider": (
+                    model_su.provider_id.service if model_su.provider_id else None
+                ),
+                "provider_id": (
+                    model_su.provider_id.id if model_su.provider_id else None
+                ),
+                "model": model_su.name,
+                "model_id": model_su.id,
+                "streaming": bool(use_streaming),
+                "attempt": attempt + 1,
+                "request": {
+                    "messages": len(chat_kwargs.get("messages") or []),
+                    "tools": len(chat_kwargs.get("tools") or []),
+                    "reasoning_effort": (
+                        getattr(model_su, "reasoning_effort", "") or ""
+                    ),
+                    "final_answer": bool(final_answer),
+                },
+            }
+            sink = {}
+
             # Phase 1: call the LLM API (retryable on transient errors).
             # TransientLLMError is only raised by chat() — BEFORE any stream
             # chunks are processed.  Mid-stream connection drops are raw SDK
             # exceptions that propagate immediately (no partial-state retry).
             try:
-                raw_response = self.sudo().model_id.chat(**chat_kwargs)
+                raw_response = model_su.chat(**chat_kwargs)
             except Exception as exc:
+                # TEL-01: trace the chat-phase failure before retry/raise.
+                self._finalize_llm_trace(request_trace, sink, "error", exc)
                 if self._is_transient_llm_error(exc) and attempt < max_retries - 1:
                     wait = backoff_base * (2**attempt)
                     _logger.warning(
@@ -642,12 +731,16 @@ class LLMThread(models.Model):
                     assistant_message = yield from self._handle_streaming_response(
                         raw_response,
                         loop_control_check=loop_control_check,
+                        trace_sink=sink,
                     )
                 else:
                     assistant_message = yield from self._handle_non_streaming_response(
                         raw_response,
+                        trace_sink=sink,
                     )
             except TransientLLMError as exc:
+                # TEL-01: trace the handler-phase failure before retry/raise.
+                self._finalize_llm_trace(request_trace, sink, "error", exc)
                 if attempt < max_retries - 1:
                     wait = backoff_base * (2**attempt)
                     _logger.warning(
@@ -660,6 +753,8 @@ class LLMThread(models.Model):
                     time.sleep(wait)
                     continue
                 raise
+            # TEL-01: trace the successful attempt.
+            self._finalize_llm_trace(request_trace, sink, "ok", None)
             return assistant_message
 
     def _is_transient_llm_error(self, exc):
@@ -899,7 +994,9 @@ class LLMThread(models.Model):
 
         return False
 
-    def _handle_streaming_response(self, stream_response, *, loop_control_check=None):
+    def _handle_streaming_response(  # noqa: C901
+        self, stream_response, *, loop_control_check=None, trace_sink=None
+    ):
         """Handle streaming response from LLM provider with tool call processing.
 
         The between-chunks cancel check is **mode-aware** (Phase 3): in
@@ -909,16 +1006,77 @@ class LLMThread(models.Model):
         tool-call boundary or ``while`` iteration boundary. In ``immediate``
         mode (or when no ``mode`` is returned), the check raises at every
         chunk boundary (the Phase 2 behaviour, reserved for hard kills).
+
+        TEL-01: when ``trace_sink`` (a dict) is passed by the caller, it is
+        filled incrementally with the stream histogram (content/reasoning/tool
+        chunk counts + char lengths), finish_reason, usage (from the terminal
+        metadata chunk), first-token latency, and message_created/id. The sink
+        lives in the caller (``_generate_assistant_response``) so it survives
+        both the return and the raise paths — the caller's
+        ``_finalize_llm_trace`` reads it at the attempt boundary. Filling is
+        purely additive: existing yield/raise semantics are byte-for-byte
+        unchanged. Never raises from sink writes (guarded).
         """
         message = None
         accumulated_content = ""
         collected_tool_calls = []
+        # TEL-01: sink init (keys only — no behavior change). t0 is the
+        # monotonic clock for ttft/duration; the sink carries it for _fill_end.
+        t0 = time.monotonic()
+        if trace_sink is not None:
+            trace_sink.setdefault("chunks", {"content": 0, "reasoning": 0, "tool": 0})
+            trace_sink.setdefault("content_length", 0)
+            trace_sink.setdefault("reasoning_length", 0)
+            trace_sink.setdefault("tool_count", 0)
+            trace_sink.setdefault("tool_names", "")
+
+        def _sink_fill_end(msg):
+            """TEL-01: record finish timestamps + message link on the sink.
+
+            Called at every exit site (both TransientLLMError raises and both
+            return message sites). Never raises.
+            """
+            if trace_sink is None:
+                return
+            try:
+                # Odoo Datetime fields reject the ISO 'T' separator; use
+                # to_string() which produces 'YYYY-MM-DD HH:MM:SS'.
+                trace_sink["finish_ts"] = fields.Datetime.to_string(
+                    fields.Datetime.now()
+                )
+                trace_sink["duration_ms"] = int((time.monotonic() - t0) * 1000)
+                trace_sink["message_created"] = bool(msg)
+                trace_sink["message_id"] = msg.id if msg else None
+            except Exception:  # noqa: BLE001 — telemetry must never raise
+                _logger.debug("trace_sink fill_end failed", exc_info=True)
 
         for chunk in stream_response:
             if self._check_loop_control_streaming(loop_control_check):
                 raise GenerationCancelled(
                     _("Generation cancelled by loop-control hook."),
                 )
+
+            # TEL-01: record first-chunk timestamp (any chunk type counts).
+            if trace_sink is not None and "first_chunk_ts" not in trace_sink:
+                try:
+                    trace_sink["first_chunk_ts"] = fields.Datetime.to_string(
+                        fields.Datetime.now()
+                    )
+                    trace_sink["ttft_ms"] = int((time.monotonic() - t0) * 1000)
+                except Exception:  # noqa: BLE001 — telemetry must never raise
+                    _logger.debug("trace_sink first-chunk fill failed", exc_info=True)
+
+            # TEL-01: handle terminal metadata chunks FIRST (finish_reason,
+            # usage) — record into sink, continue. These keys never collide
+            # with content/tool_calls/error keys.
+            if trace_sink is not None:
+                if "finish_reason" in chunk:
+                    trace_sink["finish_reason"] = chunk["finish_reason"]
+                    continue
+                if "usage" in chunk:
+                    trace_sink["usage"] = chunk["usage"]
+                    continue
+
             # Initialize message on first content
             if message is None and chunk.get("content"):
                 message = self.message_post(
@@ -931,15 +1089,41 @@ class LLMThread(models.Model):
             # Handle content streaming
             if chunk.get("content"):
                 accumulated_content += chunk["content"]
+                if trace_sink is not None:
+                    try:
+                        trace_sink["chunks"]["content"] += 1
+                        trace_sink["content_length"] += len(chunk["content"])
+                    except Exception:  # noqa: BLE001 — telemetry must never raise
+                        _logger.debug("trace_sink content fill failed", exc_info=True)
                 message.write({"body": self._process_llm_body(accumulated_content)})
                 yield {"type": "message_chunk", "message": message.to_store_format()}
 
             # Collect tool calls for processing
             if chunk.get("tool_calls"):
                 collected_tool_calls.extend(chunk["tool_calls"])
+                if trace_sink is not None:
+                    try:
+                        trace_sink["chunks"]["tool"] += 1
+                        trace_sink["tool_count"] = len(chunk["tool_calls"])
+                        names = [
+                            (tc.get("function") or {}).get("name", "")
+                            for tc in chunk["tool_calls"]
+                        ]
+                        trace_sink["tool_names"] = ",".join(n for n in names if n)
+                    except Exception:  # noqa: BLE001 — telemetry must never raise
+                        _logger.debug("trace_sink tool fill failed", exc_info=True)
                 _logger.debug(
                     f"Collected {len(chunk['tool_calls'])} tool calls from chunk",
                 )
+
+            # TEL-01: count reasoning chunks (they carry no content/tool_calls
+            # keys, so they fall through the above checks — count them here).
+            if chunk.get("reasoning") and trace_sink is not None:
+                try:
+                    trace_sink["chunks"]["reasoning"] += 1
+                    trace_sink["reasoning_length"] += len(chunk["reasoning"])
+                except Exception:  # noqa: BLE001 — telemetry must never raise
+                    _logger.debug("trace_sink reasoning fill failed", exc_info=True)
 
             # Handle errors
             if chunk.get("error"):
@@ -951,6 +1135,7 @@ class LLMThread(models.Model):
                     # re-attempts; after retries exhausted the error
                     # propagates to the orchestrator instead of silently
                     # returning None (false success).
+                    _sink_fill_end(None)
                     raise TransientLLMError(
                         _(
                             "LLM stream error before any content: %s",
@@ -961,6 +1146,7 @@ class LLMThread(models.Model):
                 # semantics: return the partial message so the caller can
                 # decide what to do.  Mid-stream errors are NOT retried
                 # because the partial message cannot be un-posted.
+                _sink_fill_end(message)
                 return message
 
         # CRITICAL FIX: Create assistant message IMMEDIATELY if we have tool calls
@@ -997,12 +1183,14 @@ class LLMThread(models.Model):
             # _generate_assistant_response re-calls chat() with backoff;
             # after retries are exhausted the error propagates to the
             # orchestrator instead of silently returning None.
+            _sink_fill_end(None)
             raise TransientLLMError(
                 _("LLM stream completed with no content and no tool calls."),
             )
+        _sink_fill_end(message)
         return message
 
-    def _handle_non_streaming_response(self, response):
+    def _handle_non_streaming_response(self, response, *, trace_sink=None):
         """Handle non-streaming response from LLM provider.
 
         Guards against a provider ``chat()`` call that returns a raw string
@@ -1011,7 +1199,13 @@ class LLMThread(models.Model):
         ``"'str' object has no attribute 'get'"`` expert failures). Mirrors
         the ``isinstance(result, dict)`` guard already present at line 823
         in ``_llm_fold_into_summary``.
+
+        TEL-01: when ``trace_sink`` is passed, fills content_length,
+        tool_count/names, usage from ``response.get("usage")``, and
+        message_created/id before both the raise and the yield path. Purely
+        additive — never raises from sink writes.
         """
+        t0 = time.monotonic()
         # Extract content and tool calls from response. Some providers
         # return a raw string instead of a dict on edge cases (empty
         # response, rate-limit fallback). Guard with isinstance to avoid
@@ -1028,12 +1222,47 @@ class LLMThread(models.Model):
             content = response.get("content", "")
             tool_calls = response.get("tool_calls", [])
 
+        # TEL-01: fill the sink with what we extracted (before the raise so
+        # the trace records the empty-response signature).
+        if trace_sink is not None:
+            try:
+                # Odoo Datetime fields reject the ISO 'T' separator; use
+                # to_string() which produces 'YYYY-MM-DD HH:MM:SS'.
+                trace_sink["finish_ts"] = fields.Datetime.to_string(
+                    fields.Datetime.now()
+                )
+                trace_sink["duration_ms"] = int((time.monotonic() - t0) * 1000)
+                trace_sink["content_length"] = len(content or "")
+                trace_sink["tool_count"] = len(tool_calls or [])
+                if tool_calls:
+                    names = [
+                        (tc.get("function") or {}).get("name", "") for tc in tool_calls
+                    ]
+                    trace_sink["tool_names"] = ",".join(n for n in names if n)
+                usage = response.get("usage") if isinstance(response, dict) else None
+                if usage:
+                    trace_sink["usage"] = usage
+                # finish_reason is not reliably present on non-streaming
+                # responses; leave unset when absent.
+                if isinstance(response, dict) and response.get("finish_reason"):
+                    trace_sink["finish_reason"] = response["finish_reason"]
+            except Exception:  # noqa: BLE001 — telemetry must never raise
+                _logger.debug("trace_sink non-streaming fill failed", exc_info=True)
+
         if not content and not tool_calls:
             # Provider returned no content and no tool_calls.  Do NOT
             # fabricate a fake "No response from model" assistant message
             # (false success).  Treat as transient so the retry loop
             # re-calls chat(); after retries are exhausted the error
             # propagates to the orchestrator.
+            if trace_sink is not None:
+                try:
+                    trace_sink["message_created"] = False
+                    trace_sink["message_id"] = None
+                except Exception:  # noqa: BLE001 — telemetry must never raise
+                    _logger.debug(
+                        "trace_sink message_created fill failed", exc_info=True
+                    )
             raise TransientLLMError(
                 _("LLM returned no content and no tool calls."),
             )
@@ -1048,6 +1277,14 @@ class LLMThread(models.Model):
             llm_role="assistant",
             author_id=False,
         )
+
+        # TEL-01: record the created message link.
+        if trace_sink is not None:
+            try:
+                trace_sink["message_created"] = True
+                trace_sink["message_id"] = assistant_message.id
+            except Exception:  # noqa: BLE001 — telemetry must never raise
+                _logger.debug("trace_sink message link fill failed", exc_info=True)
 
         yield {
             "type": "message_create",

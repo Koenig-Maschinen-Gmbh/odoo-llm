@@ -1,3 +1,25 @@
+18.0.1.13.0 (2026-07-20)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] TEL-01: ``_record_llm_call_trace`` hook (no-op + log in the
+  base fork; koenig overrides persist it as ``koenig.ai.llm.trace``). OCB
+  hook precedent: ``mail_thread._get_customer_information``.
+* [KOENIG][ADD] TEL-01: ``_finalize_llm_trace`` helper — merges
+  ``request_trace`` + ``sink``, sets status/error from the exception, calls
+  the hook. Fired at the attempt boundary for all three outcomes (ok /
+  transient / fatal). Capture is purely additive — retry/raise semantics
+  are byte-for-byte unchanged (the committed 18.0.1.12.1 semantics are
+  untouchable).
+* [KOENIG][ADD] TEL-01: ``trace_sink`` parameter in both
+  ``_handle_streaming_response`` and ``_handle_non_streaming_response``.
+  When passed, the sink is filled incrementally with the stream histogram
+  (content/reasoning/tool chunk counts + char lengths), finish_reason,
+  usage (from the terminal metadata chunk), first-token latency, and
+  message_created/id. The sink lives in the caller
+  (``_generate_assistant_response``) so it survives both the return and
+  the raise paths. Filling is purely additive — existing yield/raise
+  semantics are unchanged. Never raises from sink writes.
+
 18.0.1.12.1 (2026-07-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
