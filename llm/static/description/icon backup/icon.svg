@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="886" height="886" viewBox="184 160 885 885" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
   <title id="title">König Intelligence app icon</title>
   <desc id="desc">True vector path version traced from the approved square logo.</desc>
-  <rect x="184" y="160" width="885" height="885" fill="#FFFFFF"/>
+  <rect width="1254" height="1254" rx="190" ry="190" fill="#FFFFFF"/>
   <g id="koenig-k" fill="#E1010C">
     <path d="M 212 370 L 212 730 L 340 730 L 340 590 L 342 588 L 375 588 L 527 730 L 696 730 L 504 547 L 694 370 L 519 370 L 376 504 L 342 504 L 340 502 L 340 370 Z"/>
   </g>
