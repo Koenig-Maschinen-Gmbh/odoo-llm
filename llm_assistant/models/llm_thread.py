@@ -691,7 +691,9 @@ class LLMThread(models.Model):
                     "messages": len(chat_kwargs.get("messages") or []),
                     "tools": len(chat_kwargs.get("tools") or []),
                     "reasoning_effort": (
-                        getattr(model_su, "reasoning_effort", "") or ""
+                        chat_kwargs.get("reasoning_effort")
+                        or getattr(model_su, "reasoning_effort", "")
+                        or ""
                     ),
                     "final_answer": bool(final_answer),
                 },

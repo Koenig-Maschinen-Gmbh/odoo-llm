@@ -163,6 +163,30 @@ class LLMProvider(models.Model):
 
         return formatted_tool
 
+    def _apply_reasoning_effort(self, params, model, effort):
+        """Apply reasoning effort to API params, branching by provider (D1).
+
+        D1 (tracker §2): Scaleway/IONOS need the native top-level
+        ``reasoning_effort`` parameter; OpenRouter needs the unified
+        ``reasoning: {effort}`` dict inside ``extra_body``. Verified live:
+        the OpenRouter format is silently IGNORED by Scaleway
+        (RESEARCH_2026-07-20 §1.1 — 12.3 s full-reasoning call instead of
+        the expected 0.39 s ``none`` call).
+
+        Empty effort = provider default — no param is sent (byte-for-byte
+        current behavior; rollback = clear the field / omit the kwarg).
+
+        Args:
+            params (dict): the API call params dict (modified in place).
+            model (llm.model): the model record (for capability checks).
+            effort (str): the effort level (none/minimal/low/medium/high).
+        """
+        api_base = (self.api_base or "").lower()
+        if "openrouter.ai" in api_base:
+            params.setdefault("extra_body", {})["reasoning"] = {"effort": effort}
+        else:
+            params["reasoning_effort"] = effort
+
     def openai_chat(
         self,
         messages,
@@ -180,7 +204,8 @@ class LLMProvider(models.Model):
             stream: Whether to stream the response
             tools: llm.tool recordset of available tools
             prepend_messages: List of pre-formatted message dicts to prepend
-            **kwargs: Additional OpenAI-specific parameters (e.g., tool_choice)
+            **kwargs: Additional OpenAI-specific parameters (e.g., tool_choice,
+                reasoning_effort for per-call effort override per D2)
 
         Returns:
             Generator yielding response chunks if streaming, else complete response
@@ -206,15 +231,19 @@ class LLMProvider(models.Model):
             "messages": formatted_messages,
         }
 
-        # Reasoning control (OpenRouter unified `reasoning` parameter): reduce or
-        # disable the model's internal reasoning to cut latency where extended
-        # reasoning doesn't improve quality (RAG / tool-using chat). Empty field =
-        # provider default. Harmless for non-reasoning models / providers.
-        effort = (
+        # Reasoning control (D1/D2 — tracker §3 P1-1): per-call kwarg >
+        # model.reasoning_effort > no param (provider default).
+        # D1: Scaleway/IONOS need native top-level ``reasoning_effort``;
+        # OpenRouter needs the unified ``reasoning: {effort}`` dict in
+        # ``extra_body``. Verified live: the OpenRouter format is silently
+        # IGNORED by Scaleway (RESEARCH_2026-07-20 §1.1 — false-confidence
+        # trap). Empty effort = provider default (byte-for-byte current
+        # behavior — rollback = clear the field / omit the kwarg).
+        effort = kwargs.get("reasoning_effort") or (
             model.reasoning_effort if "reasoning_effort" in model._fields else False
         )
         if effort:
-            params.setdefault("extra_body", {})["reasoning"] = {"effort": effort}
+            self._apply_reasoning_effort(params, model, effort)
 
         # TEL-01: request real token usage in the stream. OpenAI-compatible
         # providers that support ``stream_options.include_usage`` emit a
@@ -243,17 +272,24 @@ class LLMProvider(models.Model):
             return self._openai_process_non_streaming_response(response)
         return self._openai_process_streaming_response(response)
 
-    def openai_simple_completion(self, prompt, system_prompt=None, model=None):
+    def openai_simple_completion(self, prompt, system_prompt=None, model=None, reasoning_effort=None, max_tokens=None):
         """Simple text completion using raw OpenAI client (no mail.message).
 
         Used for lightweight one-shot completions like title generation.
         Bypasses the mail.message formatting pipeline entirely — just builds
         plain ``{role, content}`` dicts and calls the API directly.
 
+        P1-1.2 (tracker §3): accepts ``reasoning_effort`` (per-call override,
+        D2 precedence) and ``max_tokens`` (safety cap). For the title call,
+        ``reasoning_effort='none'`` cuts the title generation from 8–55 s to
+        ~0.4 s (RESEARCH_2026-07-20 §1.1). Empty effort = provider default.
+
         Args:
             prompt (str): The user prompt text.
             system_prompt (str|None): Optional system prompt.
             model (llm.model|None): Optional specific model.
+            reasoning_effort (str|None): Per-call effort override (D2).
+            max_tokens (int|None): Optional max-token cap.
 
         Returns:
             str: The generated text content (empty string on failure).
@@ -263,11 +299,20 @@ class LLMProvider(models.Model):
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        response = self.client.chat.completions.create(
-            model=model.name,
-            stream=False,
-            messages=messages,
+        params = {
+            "model": model.name,
+            "stream": False,
+            "messages": messages,
+        }
+        # Reasoning control (D1/D2): per-call kwarg > model field > no param.
+        effort = reasoning_effort or (
+            model.reasoning_effort if "reasoning_effort" in model._fields else False
         )
+        if effort:
+            self._apply_reasoning_effort(params, model, effort)
+        if max_tokens:
+            params["max_tokens"] = max_tokens
+        response = self.client.chat.completions.create(**params)
         result = self._openai_process_non_streaming_response(response)
         return result.get("content", "")
 

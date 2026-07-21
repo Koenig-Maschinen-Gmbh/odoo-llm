@@ -121,23 +121,30 @@ class LLMProvider(models.Model):
             **kwargs,
 )
 
-    def simple_completion(self, prompt, system_prompt=None, model=None):
+    def simple_completion(self, prompt, system_prompt=None, model=None, **kwargs):
         """Simple text completion without mail.message overhead.
 
         Used for lightweight LLM calls like title generation where creating
         full mail.message records is unnecessary. Dispatches to the provider's
         implementation via the standard ``_dispatch`` pattern.
 
+        P1-2 (tracker §3): forwards ``**kwargs`` (e.g. ``reasoning_effort``,
+        ``max_tokens``) through ``_dispatch`` to the provider's
+        ``openai_simple_completion``. ``_dispatch`` already forwards
+        ``**kwargs`` via ``getattr(record, service_method)(*args, **kwargs)``.
+
         Args:
             prompt (str): The user prompt text.
             system_prompt (str|None): Optional system prompt.
             model (llm.model|None): Optional specific model to use.
+            **kwargs: Additional provider-specific parameters (e.g.
+                ``reasoning_effort='none'``, ``max_tokens=50``).
 
         Returns:
             str: The generated text (empty string on failure).
         """
         return self._dispatch(
-            "simple_completion", prompt, system_prompt=system_prompt, model=model
+            "simple_completion", prompt, system_prompt=system_prompt, model=model, **kwargs
         )
 
     def _prepare_prepend_messages(self, prepend_messages, tools):

@@ -998,11 +998,16 @@ class LLMThread(models.Model):
         P-UX Item 2: ChatGPT-style auto-rename. After the first user message
         in a new thread, the LLM generates a 3-5 word title. Only fires when:
         - The thread has exactly 1 non-error user message (first interaction)
-        - The name is still a default placeholder ("New Chat #\u2026" or "AI Chat -\u2026")
+        - The name is still a default placeholder ("New Chat #…" or "AI Chat -…")
 
-        Uses a non-streaming LLM call via ``simple_completion`` \u2014 lightweight,
+        Uses a non-streaming LLM call via ``simple_completion`` — lightweight,
         no mail.message overhead. Failures are logged, never interrupting
         the generation flow.
+
+        P1-3 (tracker §3): passes ``reasoning_effort='none'`` + ``max_tokens=50``
+        (explicit call-site override per D2 — stays ``none`` even when the model
+        record is configured ``low``). Measured: ``none`` cuts the title call
+        from 8–55 s to ~0.4 s (RESEARCH_2026-07-20 §1.1 — 1849 tokens → 12).
 
         Returns:
             str|None: The new title if generated, None otherwise.
@@ -1040,6 +1045,8 @@ class LLMThread(models.Model):
                     "Respond with ONLY the title, no quotes, no explanations, "
                     "no trailing punctuation."
                 ),
+                reasoning_effort="none",
+                max_tokens=50,
             )
             if title:
                 title = title.strip().strip("\"'").strip()

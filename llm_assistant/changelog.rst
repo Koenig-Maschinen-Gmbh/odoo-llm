@@ -1,3 +1,13 @@
+18.0.1.13.1 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] EFF-01 P1-5: the LLM trace fingerprint now records the
+  EFFECTIVE reasoning effort — ``chat_kwargs.get("reasoning_effort")``
+  (per-call kwarg) takes precedence over ``model_su.reasoning_effort``
+  (model field), matching the D2 precedence used by the provider. In
+  Phase 1 (no per-call chat override yet), this records the model field;
+  in Phase 2 (synthesis stage), it will record the per-call override.
+
 18.0.1.13.0 (2026-07-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

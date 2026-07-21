@@ -1,3 +1,20 @@
+18.0.1.6.1 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] EFF-01 P1-1: native ``reasoning_effort`` parameter for
+  Scaleway/IONOS (top-level) vs OpenRouter unified ``reasoning`` dict
+  (``extra_body``). Verified live: the OpenRouter format is silently
+  IGNORED by Scaleway (RESEARCH_2026-07-20 §1.1 — false-confidence trap).
+  New helper ``_apply_reasoning_effort(params, model, effort)`` branches
+  by ``api_base``.
+* [KOENIG][IMP] EFF-01 P1-1: per-call ``reasoning_effort`` kwarg in
+  ``openai_chat`` (D2 precedence: per-call > model field > no param).
+  Empty effort = provider default (byte-for-byte current behavior).
+* [KOENIG][IMP] EFF-01 P1-1: ``openai_simple_completion`` now accepts
+  ``reasoning_effort`` and ``max_tokens`` kwargs, forwarded to the API
+  call. Title call at ``effort=none`` + ``max_tokens=50`` cuts generation
+  from 8–55 s to ~0.4 s.
+
 18.0.1.6.0 (2026-07-20)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

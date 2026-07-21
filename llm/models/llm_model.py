@@ -61,21 +61,26 @@ class LLMModel(models.Model):
         """Send chat messages using this model"""
         return self.provider_id.chat(messages, model=self, stream=stream, **kwargs)
 
-    def simple_completion(self, prompt, system_prompt=None):
+    def simple_completion(self, prompt, system_prompt=None, **kwargs):
         """Simple text completion using this model's provider.
 
         Lightweight one-shot completion without mail.message overhead.
         Used for features like auto-title generation.
 
+        P1-2 (tracker §3): forwards ``**kwargs`` (e.g. ``reasoning_effort``,
+        ``max_tokens``) to the provider's ``simple_completion``.
+
         Args:
             prompt (str): The user prompt text.
             system_prompt (str|None): Optional system prompt.
+            **kwargs: Additional provider-specific parameters (e.g.
+                ``reasoning_effort='none'``, ``max_tokens=50``).
 
         Returns:
             str: The generated text (empty string on failure).
         """
         return self.provider_id.simple_completion(
-            prompt, system_prompt=system_prompt, model=self
+            prompt, system_prompt=system_prompt, model=self, **kwargs
         )
 
     def embedding(self, texts):

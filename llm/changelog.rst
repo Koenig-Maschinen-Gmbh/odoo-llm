@@ -1,3 +1,12 @@
+18.0.1.8.3 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] EFF-01 P1-2: ``simple_completion`` on both
+  ``llm.provider`` and ``llm.model`` now forwards ``**kwargs`` (e.g.
+  ``reasoning_effort``, ``max_tokens``) through ``_dispatch`` to the
+  provider's implementation. ``_dispatch`` already forwards ``**kwargs``
+  via ``getattr(record, service_method)(*args, **kwargs)``.
+
 18.0.1.8.2 (2026-07-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
