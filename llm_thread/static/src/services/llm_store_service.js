@@ -2,6 +2,7 @@
 
 import {
     buildOptimisticMessageBody,
+    buildTransientStatusMessage,
     linkMessagesToThread,
     removeOptimisticMessageFromThread,
 } from "../utils/llm_thread_messages";
@@ -210,6 +211,8 @@ export const llmStoreService = {
                         // message, it is re-linked via the ``llm.thread/
                         // new_message`` bus subscriber or the next reload.
                         this._removeOptimisticMessage(threadId);
+                        // UI-05: clean up the transient status line too.
+                        this._removeTransientStatusMessage(threadId);
                         // P-UX Item 3: set terminal state for the failed flash.
                         this.setThreadRunState(threadId, {
                             state: "failed",
@@ -232,6 +235,8 @@ export const llmStoreService = {
                     // temp message so the ghost does not persist (no stream
                     // means no ``message_create`` will ever reconcile it).
                     this._removeOptimisticMessage(threadId);
+                    // UI-05: clean up the transient status line too.
+                    this._removeTransientStatusMessage(threadId);
                     // P-UX Item 3: set terminal state so the indicator
                     // doesn't stay "running" forever if EventSource
                     // creation fails.
@@ -284,6 +289,90 @@ export const llmStoreService = {
                     getMessage: (id) => mailStore.Message.get(id),
                 });
                 delete this._optimisticMsgIds[threadId];
+            },
+
+            /**
+             * UI-05 — Insert a transient client-side status line ("Analyzing
+             * your request…") into the thread's timeline on
+             * ``orchestration_started``. Follows the OCB ``is_transient``
+             * precedent (``discuss_core_common_service.js:53-69``): a
+             * non-persisted ephemeral message that renders in the timeline
+             * and is removed when the real progress message arrives via the
+             * WebSocket bus (``llm.thread/new_message`` subscriber).
+             *
+             * The transient message is classified as a "progress
+             * notification" (``message_type='notification'`` + no
+             * ``llm_role``) so it picks up the ``o-llm-message-status`` CSS
+             * class and renders as a slim one-line status row (UI-06 S2).
+             *
+             * Guard: skips if the thread already has a transient status line
+             * (rapid double-submit). The transient is tracked in
+             * ``_transientStatusMsgIds`` so it can be removed by
+             * ``_removeTransientStatusMessage``.
+             */
+            _insertTransientStatusMessage(threadId) {
+                if (!threadId) {
+                    return;
+                }
+                // Guard: skip if a transient status already exists for this
+                // thread (rapid double-submit). The existing one will be
+                // replaced when the real progress message arrives.
+                if (this._transientStatusMsgIds?.[threadId] !== undefined) {
+                    return;
+                }
+                const thread = mailStore.Thread.get({
+                    model: "llm.thread",
+                    id: threadId,
+                });
+                if (!thread) {
+                    return;
+                }
+                // Use a fractional ID (OCB pattern: lastMessageId + 0.01) so
+                // the transient sorts after the last real message and after
+                // the optimistic user message (negative temp id).
+                const lastId = mailStore.getLastMessageId ? mailStore.getLastMessageId() : 0;
+                const tempId = lastId + 0.01;
+                const transientMsg = buildTransientStatusMessage({
+                    id: tempId,
+                    threadId,
+                    text: _t("Analyzing your request…"),
+                });
+                mailStore.insert({ "mail.message": [transientMsg] }, { html: true });
+                const transientRecord = mailStore.Message.get(tempId);
+                if (transientRecord) {
+                    thread.messages.add(transientRecord);
+                }
+                this._transientStatusMsgIds = this._transientStatusMsgIds || {};
+                this._transientStatusMsgIds[threadId] = tempId;
+            },
+
+            /**
+             * UI-05 — Remove the transient client-side status line for the
+             * given thread. Idempotent: a no-op when no transient status
+             * message is tracked. Delegates to the pure
+             * ``removeOptimisticMessageFromThread`` helper (same contract:
+             * check membership by id, then delete from the reactive
+             * messages collection).
+             *
+             * Called from: ``llm.thread/new_message`` subscriber (real
+             * progress message arriving), ``error`` SSE handler, terminal
+             * orchestration bus events (safety net).
+             */
+            _removeTransientStatusMessage(threadId) {
+                const tempId = this._transientStatusMsgIds?.[threadId];
+                if (tempId === undefined) {
+                    return;
+                }
+                const thread = mailStore.Thread.get({
+                    model: "llm.thread",
+                    id: threadId,
+                });
+                removeOptimisticMessageFromThread({
+                    thread,
+                    tempId,
+                    getMessage: (id) => mailStore.Message.get(id),
+                });
+                delete this._transientStatusMsgIds[threadId];
             },
 
             handleStreamMessage(threadId, data) {
@@ -360,6 +449,9 @@ export const llmStoreService = {
                     case "error":
                         console.error("Stream error:", data.error);
                         this.stopStreaming(threadId);
+                        // UI-05: remove the transient status line if it
+                        // hasn't been replaced by the real progress message.
+                        this._removeTransientStatusMessage(threadId);
                         // P-UX Item 3: set terminal state for the failed flash.
                         this.setThreadRunState(threadId, {
                             state: "failed",
@@ -411,6 +503,16 @@ export const llmStoreService = {
                             run_id: data.run_id || null,
                             orchestration: true,
                         });
+                        // UI-05 — instant client-side status line. The
+                        // real "Analyzing your request…" progress message
+                        // takes ~1–2 s (request → commit → job pickup →
+                        // post → bus). Insert an ephemeral transient
+                        // message NOW so the user sees sub-second feedback.
+                        // It is removed when the real progress message
+                        // arrives via ``llm.thread/new_message``, or on
+                        // done/error/stop. OCB precedent: ``is_transient``
+                        // (discuss_core_common_service.js:53-69).
+                        this._insertTransientStatusMessage(threadId);
                         break;
 
                     case "tool_called":
@@ -716,6 +818,15 @@ export const llmStoreService = {
                 // Normalize task_* events to run_* for backward compat.
                 const normalizedEvent =
                     event && event.startsWith("task_") ? "run_" + event.substring(5) : event;
+                // UI-05: safety net — remove the transient status line on any
+                // orchestration bus event except ``run_started`` (which fires
+                // before the real progress message is posted). The
+                // ``llm.thread/new_message`` subscriber is the primary removal
+                // path; this catches terminal events where the subscriber
+                // might have missed the message (e.g., WebSocket reconnect).
+                if (normalizedEvent && normalizedEvent !== "run_started") {
+                    this._removeTransientStatusMessage(threadId);
+                }
                 switch (normalizedEvent) {
                     case "run_started":
                         this.setThreadRunState(threadId, {
@@ -838,6 +949,11 @@ export const llmStoreService = {
 
             clearThreadRunState(threadId) {
                 delete this.threadRunState[threadId];
+                // UI-05: also clear the transient status tracking so it
+                // doesn't linger for a deleted/cleaned-up thread.
+                if (this._transientStatusMsgIds) {
+                    delete this._transientStatusMsgIds[threadId];
+                }
             },
 
             /**
@@ -1092,6 +1208,12 @@ export const llmStoreService = {
             if (!payload || !payload.data) {
                 return;
             }
+            // UI-05: remove the transient "Analyzing your request…" status
+            // line before inserting the real progress message, so the
+            // transient doesn't briefly appear alongside the real one.
+            // The transient was inserted on ``orchestration_started`` and
+            // is tracked in ``_transientStatusMsgIds``. No-op if none.
+            llmStore._removeTransientStatusMessage(payload.id);
             // Insert should always be done before any other operation (OCB
             // invariant: awaiting before insertion could overwrite newer
             // state from more recent notifications).

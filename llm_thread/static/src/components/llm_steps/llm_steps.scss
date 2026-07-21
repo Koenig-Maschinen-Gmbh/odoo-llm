@@ -1,9 +1,53 @@
-// P-CHAT M2 — foreground/background message hierarchy.
+// P-CHAT M2 + UI-06 S2 — foreground/background message hierarchy.
 //
 // Scope: llm.thread messages (the message_patch.js className getter adds
 // `o-llm-message` + role/hierarchy classes to the mail Message root).
 // Regular mail/discuss messages are untouched.
 .o-llm-message {
+    // --- Slim status-line rendering (UI-06 S2) ---------------------------
+    // Step messages (tool/intermediate assistant) and progress notifications
+    // render as slim one-line status rows: no avatar sidebar, no author/date
+    // header, muted small body, reduced vertical rhythm. The message content
+    // (narration, "Executing …", progress text) takes full width.
+    // User messages and final answers keep full chrome (avatar, author,
+    // timestamp) — they are NOT targeted by these rules.
+    &.o-llm-step,
+    &.o-llm-message-status {
+        // Bootstrap .d-flex on the sidebar/header uses ``display: flex !important``,
+        // so our ``display: none`` must also use ``!important`` to override it.
+        // The OCB message template (message.xml:23,35) adds ``d-flex`` to both
+        // elements, so a plain ``display: none`` (no ``!important``) is silently
+        // overridden and the sidebar/header stay visible.
+        .o-mail-Message-sidebar {
+            display: none !important;
+        }
+        .o-mail-Message-header {
+            display: none !important;
+        }
+        .o-mail-Message-content {
+            padding-left: 0;
+            padding-top: 0.125rem;
+            padding-bottom: 0.125rem;
+        }
+        .o-mail-Message-body {
+            font-size: 0.8125rem;
+            color: var(--text-muted, #6c757d);
+            line-height: 1.4;
+        }
+    }
+
+    // Progress notifications: constrain to one muted line (truncate long
+    // text with ellipsis). These are the "Analyzing…", "Dispatching
+    // expert…", "…returned results." messages — always short status text.
+    &.o-llm-message-status {
+        .o-mail-Message-body {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-style: italic;
+        }
+    }
+
     // --- Steps drawer -----------------------------------------------------
     // Tool messages and intermediate assistant messages (with tool_calls)
     // are "steps". When the turn's drawer is collapsed, the step body is
@@ -11,8 +55,12 @@
     // expanded, every step renders its content (tool result / tool calls)
     // under the drawer header.
     &.o-llm-step.o-llm-step-collapsed {
+        // OCB message.xml:68 gives o-mail-Message-textContent the Bootstrap
+        // ``d-flex`` class (``display: flex !important``), so our ``display: none``
+        // must also use ``!important`` — same pattern as the sidebar/header hide
+        // rules above.
         .o-mail-Message-textContent {
-            display: none;
+            display: none !important;
         }
     }
 

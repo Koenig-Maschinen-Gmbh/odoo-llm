@@ -34,6 +34,40 @@ export function buildOptimisticMessageBody(text) {
 }
 
 /**
+ * UI-05 — Build the transient client-side status message object inserted on
+ * ``orchestration_started``. Follows the OCB ``is_transient`` precedent
+ * (``discuss_core_common_service.js:53-69``): a non-persisted ephemeral
+ * message that renders in the timeline and is removed when the real
+ * progress message arrives via the WebSocket bus.
+ *
+ * The message is classified as a "progress notification" by
+ * ``isLLMProgressMessage`` (``message_type === 'notification'`` + no
+ * ``llm_role``), so it picks up the ``o-llm-message-status`` CSS class and
+ * renders as a slim one-line status row (UI-06 S2).
+ *
+ * @param {Object} params
+ * @param {Number} params.id ephemeral id (fractional, e.g. ``lastMessageId + 0.01``)
+ * @param {Number} params.threadId the llm.thread id
+ * @param {String} params.text the status text (already translated by the caller)
+ * @param {String} [params.date] ISO date string (defaults to now)
+ * @returns {Object} the transient message data object for ``mailStore.insert``
+ */
+export function buildTransientStatusMessage({ id, threadId, text, date }) {
+    return {
+        id,
+        model: "llm.thread",
+        res_id: threadId,
+        body: `<p>${escape(text)}</p>`,
+        llm_role: false,
+        author_id: false,
+        is_error: false,
+        is_transient: true,
+        message_type: "notification",
+        date: date || new Date().toISOString(),
+    };
+}
+
+/**
  * Remove a tracked optimistic temp message from a thread's reactive messages
  * collection. Idempotent: returns ``false`` (no-op) when there is nothing to
  * remove — either the temp message cannot be resolved, OR it resolves but is

@@ -1,3 +1,65 @@
+18.0.1.23.0 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **UI-05: Instant client-side status line.** On
+  ``orchestration_started``, an ephemeral transient message ("Analyzing your
+  request…") is inserted into the thread timeline immediately — sub-second
+  perceived feedback. It follows the OCB ``is_transient`` precedent
+  (``discuss_core_common_service.js:53-69``) and is automatically removed
+  when the real progress message arrives via the ``llm.thread/new_message``
+  WebSocket bus subscriber, or on done/error/stop. Rapid double-submit guard
+  skips insertion if a transient already exists. New pure helper
+  ``buildTransientStatusMessage`` (Hoot-tested).
+
+* [IMP] **UI-06 S1: Progress notification classification.** New pure helper
+  ``isLLMProgressMessage(msg)`` classifies system-style notifications
+  (``message_type='notification'`` + no ``llm_role``) as progress messages.
+  The ``className`` getter adds ``o-llm-message-status`` to these messages,
+  enabling slim status-line rendering. Error messages are excluded (they stay
+  prominent). This also fixes the "Unbenannt" author header on progress
+  notifications — status lines never render the author header.
+
+* [IMP] **UI-06 S2: Slim in-between status lines.** SCSS on the existing
+  empty CSS hooks (``o-llm-step``, ``o-llm-message-status``): hides the
+  avatar sidebar and author/date header for step messages (tool/intermediate
+  assistant) and progress notifications. The message content takes full width
+  as a muted, small, one-line status row. User messages and final answers
+  keep full chrome (avatar, author, timestamp). Progress notifications are
+  constrained to one line with ellipsis truncation. The ``display: none``
+  rules use ``!important`` to override Bootstrap's ``d-flex`` class
+  (``display: flex !important``) which OCB adds to the sidebar/header
+  elements in ``message.xml:23,35``.
+
+* [IMP] **UI-06 S3: Drawer defaults — active turn open, completed collapsed.**
+  The steps drawer now defaults to OPEN for the latest turn of a running
+  thread, so the user sees the live status feed (tool calls, master
+  narration, progress notifications) during an active AI run. Completed turns
+  default to collapsed (folded "▸ N work steps"). Explicit user toggles always
+  take precedence over the default.
+
+* [IMP] **UI-07: König Intelligence avatar for AI messages.** The
+  ``authorAvatarUrl`` getter is patched to return the branded König
+  Intelligence app icon (``/llm/static/description/icon.png``) for all AI-side
+  ``llm.thread`` messages (assistant, tool, progress). User messages keep the
+  user's own avatar. OCB precedent: ``message.js:238-253`` ``authorAvatarUrl``
+  getter.
+
+* [TEST] Extended ``llm_message_classify.test.js`` with
+  ``isLLMProgressMessage`` tests (7 new cases: classification, null safety,
+  error exclusion, step exclusion). Extended ``llm_thread_messages.test.js``
+  with ``buildTransientStatusMessage`` tests (8 new cases: shape, escaping,
+  date default, progress classification, transient flag, step exclusion) and
+  fractional-id removal tests.
+
+18.0.1.22.2 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] EFF-01 P1-3: ``_maybe_generate_name`` now passes
+  ``reasoning_effort='none'`` + ``max_tokens=50`` to ``simple_completion``
+  (explicit call-site override per D2 — stays ``none`` even when the model
+  record is configured ``low``). Measured: ``none`` cuts the title call
+  from 8–55 s to ~0.4 s (RESEARCH_2026-07-20 §1.1 — 1849 tokens → 12).
+
 18.0.1.22.1 (2026-07-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -8,22 +8,29 @@ import { MessageActionMenuMobile } from "@mail/core/common/message_action_menu_m
 import { Record } from "@mail/core/common/record";
 import { patch } from "@web/core/utils/patch";
 import { useService } from "@web/core/utils/hooks";
+import { url } from "@web/core/utils/urls";
 import { status, useState } from "@odoo/owl";
 import {
-  isLLMStepMessage as _isStepMessage,
-  isLLMErrorMessage as _isErrorMessage,
-  isLLMFinalAnswer as _isFinalAnswer,
-  isLLMFirstStepOfTurn as _isFirstStepOfTurn,
-  llmStepCountInTurn as _stepCountInTurn,
-  llmTurnIdForMessage as _turnIdFor,
+    isLLMErrorMessage as _isErrorMessage,
+    isLLMFinalAnswer as _isFinalAnswer,
+    isLLMFirstStepOfTurn as _isFirstStepOfTurn,
+    isLLMProgressMessage as _isProgressMessage,
+    isLLMStepMessage as _isStepMessage,
+    llmStepCountInTurn as _stepCountInTurn,
+    llmTurnIdForMessage as _turnIdFor,
 } from "../utils/llm_message_classify";
+
+// UI-07 — the branded König Intelligence app icon, used as the avatar for
+// all AI-side messages (assistant / tool / progress). The same asset is
+// already shipped as the app menu web_icon (llm/views/llm_menu_views.xml:11).
+const LLM_AVATAR_URL = url("/llm/static/description/icon.png");
 
 /**
  * PATCH 1: Message Component Static Properties
  * Adds LLMToolMessage to the available components registry
  */
 patch(Message, {
-  components: { ...Message.components, LLMToolMessage },
+    components: { ...Message.components, LLMToolMessage },
 });
 
 /**
@@ -32,271 +39,328 @@ patch(Message, {
  * These methods are used by the component template and rendering logic
  */
 patch(Message.prototype, {
-  setup() {
-    super.setup();
-    // In an LLM (AI) conversation, the standard chatter message-action toolbar
-    // (Add a Reaction, Mark as Todo/star, Reply, Edit, Delete, Copy Link,
-    // Translate, the overflow "Expand" menu, …) is meaningless and only adds
-    // noise. The mail Message component populates `this.messageActions` from
-    // the global `mail.message/actions` registry in its own setup; here we
-    // replace it with an empty, read-only action set for llm.thread messages
-    // so no chatter affordances render. Regular mail/discuss messages are
-    // untouched. The getter reads nothing reactive, so it is render-safe.
-    if (this.props.message?.model === "llm.thread") {
-      this.messageActions = {
-        get actions() {
-          return [];
-        },
-      };
-    }
-    // P-CHAT M1: copy-button "Copied" flash state. Hooks must be called
-    // unconditionally, so this is created for every message (cheap); only
-    // the assistant copy button reads it.
-    this.llmCopyState = useState({ copied: false });
-
-    // P-CHAT M2: llm store for the per-turn steps-drawer collapse state
-    // and (M3) the run-feedback state. Wrapped in useState so reads of
-    // stepDrawerOpen / threadRunState in this component's getters are
-    // reactive — without useState the drawer toggle and run-state-driven
-    // classes would never re-render (matches composer_patch.js +
-    // llm_thread_header.js).
-    try {
-      this.llmStore = useState(useService("llm.store"));
-    } catch (error) {
-      this.llmStore = null;
-    }
-  },
-
-  /**
-   * Copy the assistant answer to the clipboard (P-CHAT M1).
-   *
-   * Prefers the markdown source when ``body_json.markdown`` is present
-   * (future-proofing for paths that store the raw markdown); otherwise
-   * strips the stored rendered HTML down to plain text. The clipboard API
-   * requires a secure context — on failure the call is a no-op (no error
-   * surfaced to the user for a copy button).
-   */
-  async copyBody() {
-    const msg = this.props.message;
-    if (!msg) {
-      return;
-    }
-    let text = "";
-    if (msg.body_json && msg.body_json.markdown) {
-      text = msg.body_json.markdown;
-    } else if (msg.body) {
-      const tmp = document.createElement("div");
-      tmp.innerHTML = msg.body;
-      text = tmp.textContent || tmp.innerText || "";
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      if (status(this) === "destroyed") {
-        return;
-      }
-      this.llmCopyState.copied = true;
-      setTimeout(() => {
-        if (status(this) === "destroyed") {
-          return;
+    setup() {
+        super.setup();
+        // In an LLM (AI) conversation, the standard chatter message-action toolbar
+        // (Add a Reaction, Mark as Todo/star, Reply, Edit, Delete, Copy Link,
+        // Translate, the overflow "Expand" menu, …) is meaningless and only adds
+        // noise. The mail Message component populates `this.messageActions` from
+        // the global `mail.message/actions` registry in its own setup; here we
+        // replace it with an empty, read-only action set for llm.thread messages
+        // so no chatter affordances render. Regular mail/discuss messages are
+        // untouched. The getter reads nothing reactive, so it is render-safe.
+        if (this.props.message?.model === "llm.thread") {
+            this.messageActions = {
+                get actions() {
+                    return [];
+                },
+            };
         }
-        this.llmCopyState.copied = false;
-      }, 1500);
-    } catch {
-      // clipboard API unavailable (non-secure context) — no-op.
-    }
-  },
+        // P-CHAT M1: copy-button "Copied" flash state. Hooks must be called
+        // unconditionally, so this is created for every message (cheap); only
+        // the assistant copy button reads it.
+        this.llmCopyState = useState({ copied: false });
 
-  /**
-   * Label for the assistant copy button — flips to "Copied" briefly.
-   */
-  get copiedLabel() {
-    return this.llmCopyState.copied ? _t("Copied") : _t("Copy");
-  },
+        // P-CHAT M2: llm store for the per-turn steps-drawer collapse state
+        // and (M3) the run-feedback state. Wrapped in useState so reads of
+        // stepDrawerOpen / threadRunState in this component's getters are
+        // reactive — without useState the drawer toggle and run-state-driven
+        // classes would never re-render (matches composer_patch.js +
+        // llm_thread_header.js).
+        try {
+            this.llmStore = useState(useService("llm.store"));
+        } catch (error) {
+            this.llmStore = null;
+        }
+    },
 
-  /**
-   * Check if this message is in an LLM thread
-   */
-  get isLLMMessage() {
-    return this.props.message?.model === "llm.thread";
-  },
+    /**
+     * Copy the assistant answer to the clipboard (P-CHAT M1).
+     *
+     * Prefers the markdown source when ``body_json.markdown`` is present
+     * (future-proofing for paths that store the raw markdown); otherwise
+     * strips the stored rendered HTML down to plain text. The clipboard API
+     * requires a secure context — on failure the call is a no-op (no error
+     * surfaced to the user for a copy button).
+     */
+    async copyBody() {
+        const msg = this.props.message;
+        if (!msg) {
+            return;
+        }
+        let text = "";
+        if (msg.body_json && msg.body_json.markdown) {
+            text = msg.body_json.markdown;
+        } else if (msg.body) {
+            const tmp = document.createElement("div");
+            tmp.innerHTML = msg.body;
+            text = tmp.textContent || tmp.innerText || "";
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            if (status(this) === "destroyed") {
+                return;
+            }
+            this.llmCopyState.copied = true;
+            setTimeout(() => {
+                if (status(this) === "destroyed") {
+                    return;
+                }
+                this.llmCopyState.copied = false;
+            }, 1500);
+        } catch {
+            // Clipboard API unavailable (non-secure context) — no-op.
+        }
+    },
 
-  /**
-   * Get LLM role for this message
-   */
-  get llmRole() {
-    return this.props.message?.llm_role;
-  },
+    /**
+     * Label for the assistant copy button — flips to "Copied" briefly.
+     */
+    get copiedLabel() {
+        return this.llmCopyState.copied ? _t("Copied") : _t("Copy");
+    },
 
-  /**
-   * Check if message is a tool message
-   */
-  get isToolMessage() {
-    return this.isLLMMessage && this.llmRole === "tool";
-  },
+    /**
+     * Check if this message is in an LLM thread
+     */
+    get isLLMMessage() {
+        return this.props.message?.model === "llm.thread";
+    },
 
-  /**
-   * Check if assistant message has tool calls
-   */
-  get hasToolCalls() {
-    return (
-      this.isLLMMessage &&
-      this.llmRole === "assistant" &&
-      this.props.message?.body_json?.tool_calls?.length > 0
-    );
-  },
+    /**
+     * Get LLM role for this message
+     */
+    get llmRole() {
+        return this.props.message?.llm_role;
+    },
 
-  // ------------------------------------------------------------------------
-  // P-CHAT M2 — foreground/background message hierarchy.
-  // Classification + turn grouping delegate to pure helpers in
-  // utils/llm_message_classify.js so they are unit-testable without mounting.
-  // ------------------------------------------------------------------------
+    /**
+     * Check if message is a tool message
+     */
+    get isToolMessage() {
+        return this.isLLMMessage && this.llmRole === "tool";
+    },
 
-  /**
-   * The thread's messages in ascending display order. The mail Thread
-   * component renders `orderedMessages`; for llm.thread (created in id order,
-   * displayed asc) sorting by id matches the rendered order.
-   */
-  get llmOrderedMessages() {
-    const msgs = this.props.thread?.messages;
-    if (!msgs) {
-      return [];
-    }
-    return [...msgs].sort((a, b) => (a.id || 0) - (b.id || 0));
-  },
+    /**
+     * Check if assistant message has tool calls
+     */
+    get hasToolCalls() {
+        return (
+            this.isLLMMessage &&
+            this.llmRole === "assistant" &&
+            this.props.message?.body_json?.tool_calls?.length > 0
+        );
+    },
 
-  /** A failed-run error message (stays prominent, OUTSIDE the steps drawer). */
-  get isLLMError() {
-    return this.isLLMMessage && _isErrorMessage(this.props.message);
-  },
+    // ------------------------------------------------------------------------
+    // P-CHAT M2 — foreground/background message hierarchy.
+    // Classification + turn grouping delegate to pure helpers in
+    // utils/llm_message_classify.js so they are unit-testable without mounting.
+    // ------------------------------------------------------------------------
 
-  /** A "step" = tool message OR intermediate assistant (collapsed in drawer). */
-  get isLLMStep() {
-    return this.isLLMMessage && _isStepMessage(this.props.message);
-  },
+    /**
+     * The thread's messages in ascending display order. The mail Thread
+     * component renders `orderedMessages`; for llm.thread (created in id order,
+     * displayed asc) sorting by id matches the rendered order.
+     */
+    get llmOrderedMessages() {
+        const msgs = this.props.thread?.messages;
+        if (!msgs) {
+            return [];
+        }
+        return [...msgs].sort((a, b) => (a.id || 0) - (b.id || 0));
+    },
 
-  /** The final answer = assistant message without tool calls (renders expanded). */
-  get isLLMFinalAnswer() {
-    return this.isLLMMessage && _isFinalAnswer(this.props.message);
-  },
+    /** A failed-run error message (stays prominent, OUTSIDE the steps drawer). */
+    get isLLMError() {
+        return this.isLLMMessage && _isErrorMessage(this.props.message);
+    },
 
-  /** Turn id = the user message id that opened this message's turn. */
-  get llmTurnId() {
-    if (!this.isLLMMessage) {
-      return null;
-    }
-    return _turnIdFor(this.props.message, this.llmOrderedMessages);
-  },
+    /** A "step" = tool message OR intermediate assistant (collapsed in drawer). */
+    get isLLMStep() {
+        return this.isLLMMessage && _isStepMessage(this.props.message);
+    },
 
-  /** Number of step messages in this message's turn (for the drawer label). */
-  get llmStepCount() {
-    return _stepCountInTurn(this.props.message, this.llmOrderedMessages);
-  },
+    /** The final answer = assistant message without tool calls (renders expanded). */
+    get isLLMFinalAnswer() {
+        return this.isLLMMessage && _isFinalAnswer(this.props.message);
+    },
 
-  /** True for the first step message of a turn — renders the drawer toggle. */
-  get isFirstStepOfTurn() {
-    return this.isLLMStep && _isFirstStepOfTurn(this.props.message, this.llmOrderedMessages);
-  },
+    /**
+     * UI-06 S1 — A "progress" message is a system-style notification posted by
+     * the orchestration runtime (``message_type === 'notification'`` with no
+     * ``llm_role``): "Analyzing your request…", "Dispatching expert…", etc.
+     * These render as slim one-line status rows (no author header, no avatar
+     * sidebar) via the ``o-llm-message-status`` CSS class. Error messages are
+     * NOT progress messages.
+     */
+    get isLLMProgress() {
+        return this.isLLMMessage && _isProgressMessage(this.props.message);
+    },
 
-  /** Whether this turn's steps drawer is expanded (reactive on llmStore). */
-  get isStepDrawerOpen() {
-    const turnId = this.llmTurnId;
-    if (turnId == null || !this.llmStore) {
-      return false;
-    }
-    return this.llmStore.isStepDrawerOpen(turnId);
-  },
+    /** Turn id = the user message id that opened this message's turn. */
+    get llmTurnId() {
+        if (!this.isLLMMessage) {
+            return null;
+        }
+        return _turnIdFor(this.props.message, this.llmOrderedMessages);
+    },
 
-  /** Toggle the steps drawer for this message's turn. */
-  toggleStepDrawer() {
-    const turnId = this.llmTurnId;
-    if (turnId != null && this.llmStore) {
-      this.llmStore.toggleStepDrawer(turnId);
-    }
-  },
+    /** Number of step messages in this message's turn (for the drawer label). */
+    get llmStepCount() {
+        return _stepCountInTurn(this.props.message, this.llmOrderedMessages);
+    },
 
-  /** Label for the per-turn steps drawer ("Work steps" — DE via i18n). */
-  get llmStepsLabel() {
-    return _t("Work steps");
-  },
+    /** True for the first step message of a turn — renders the drawer toggle. */
+    get isFirstStepOfTurn() {
+        return this.isLLMStep && _isFirstStepOfTurn(this.props.message, this.llmOrderedMessages);
+    },
 
-  /**
-   * A short one-line summary for a collapsed step (tool name / dispatched
-   * expert), shown when the drawer is closed.
-   */
-  get llmStepSummary() {
-    const msg = this.props.message;
-    if (!msg) {
-      return "";
-    }
-    if (this.isToolMessage) {
-      const name = msg.body_json?.tool_name || msg.body_json?.name || _t("Tool");
-      const status = msg.body_json?.status;
-      const icon = status === "error" ? "⚠ " : status === "completed" ? "✓ " : "";
-      return `${icon}${name}`;
-    }
-    if (this.hasToolCalls) {
-      const names = (msg.body_json?.tool_calls || [])
-        .map((tc) => tc?.function?.name || _t("tool"))
-        .join(", ");
-      return _t("Calling: %s", names);
-    }
-    return "";
-  },
+    /**
+     * Whether this turn's steps drawer is expanded (reactive on llmStore).
+     *
+     * UI-06 S3 — default behavior: for the latest turn of a RUNNING thread,
+     * the drawer opens automatically so the user sees the live status feed
+     * (tool calls, master narration, progress notifications). Completed turns
+     * and non-latest turns default to collapsed (folded "▸ N work steps").
+     * An explicit user toggle always takes precedence over the default.
+     */
+    get isStepDrawerOpen() {
+        const turnId = this.llmTurnId;
+        if (turnId === null || !this.llmStore) {
+            return false;
+        }
+        // Explicit user toggle takes precedence.
+        const explicit = this.llmStore.stepDrawerOpen[turnId];
+        if (explicit !== undefined) {
+            return Boolean(explicit);
+        }
+        // Default: for the latest turn of a running thread, open the drawer so
+        // the user sees the live status feed. Completed turns default collapsed.
+        const threadId = this.props.thread?.id;
+        if (threadId && this.llmStore.isThreadRunning(threadId)) {
+            const msgs = this.llmOrderedMessages;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].llm_role === "user") {
+                    return msgs[i].id === turnId;
+                }
+            }
+        }
+        return false;
+    },
 
-  /**
-   * Add LLM-specific CSS classes
-   */
-  get className() {
-    let className = super.className || "";
+    /** Toggle the steps drawer for this message's turn. */
+    toggleStepDrawer() {
+        const turnId = this.llmTurnId;
+        if (turnId != null && this.llmStore) {
+            this.llmStore.toggleStepDrawer(turnId);
+        }
+    },
 
-    if (this.isLLMMessage) {
-      className += " o-llm-message";
+    /** Label for the per-turn steps drawer ("Work steps" — DE via i18n). */
+    get llmStepsLabel() {
+        return _t("Work steps");
+    },
 
-      if (this.llmRole) {
-        className += ` o-llm-message-${this.llmRole}`;
-      }
+    /**
+     * A short one-line summary for a collapsed step (tool name / dispatched
+     * expert), shown when the drawer is closed.
+     */
+    get llmStepSummary() {
+        const msg = this.props.message;
+        if (!msg) {
+            return "";
+        }
+        if (this.isToolMessage) {
+            const name = msg.body_json?.tool_name || msg.body_json?.name || _t("Tool");
+            const status = msg.body_json?.status;
+            const icon = status === "error" ? "⚠ " : status === "completed" ? "✓ " : "";
+            return `${icon}${name}`;
+        }
+        if (this.hasToolCalls) {
+            const names = (msg.body_json?.tool_calls || [])
+                .map((tc) => tc?.function?.name || _t("tool"))
+                .join(", ");
+            return _t("Calling: %s", names);
+        }
+        return "";
+    },
 
-      // Add streaming class for assistant messages that are still being generated
-      if (this.llmRole === "assistant" && this.props.message?.isPending) {
-        className += " o-llm-message-streaming";
-      }
+    /**
+     * Add LLM-specific CSS classes
+     */
+    get className() {
+        let className = super.className || "";
 
-      // P-CHAT M2 — hierarchy classes.
-      if (this.isLLMError) {
-        className += " o-llm-message-error";
-      }
-      if (this.isLLMStep) {
-        className += " o-llm-step";
-        className += this.isStepDrawerOpen
-          ? " o-llm-step-open"
-          : " o-llm-step-collapsed";
-      }
-      if (this.isLLMFinalAnswer) {
-        className += " o-llm-final-answer";
-      }
-    }
+        if (this.isLLMMessage) {
+            className += " o-llm-message";
 
-    return className;
-  },
+            if (this.llmRole) {
+                className += ` o-llm-message-${this.llmRole}`;
+            }
 
-  /**
-   * P-CHAT M2: merge this component's ``className`` getter into the root
-   * class set. The base ``attClass`` only forwards ``props.className``
-   * (from the Thread's ``getMessageClass``); it does NOT include this
-   * component's ``className`` getter, so without this override the
-   * hierarchy classes added there (``o-llm-step``, ``o-llm-step-collapsed``
-   * / ``-open``, ``o-llm-message-error``, ``o-llm-final-answer``) would
-   * never reach the DOM. Non-LLM messages: ``className`` returns ``""``
-   * → base ``attClass`` returned unchanged.
-   */
-  get attClass() {
-    const base = super.attClass;
-    const extra = this.className;
-    if (!extra) {
-      return base;
-    }
-    return { ...base, [extra]: true };
-  },
+            // Add streaming class for assistant messages that are still being generated
+            if (this.llmRole === "assistant" && this.props.message?.isPending) {
+                className += " o-llm-message-streaming";
+            }
+
+            // P-CHAT M2 — hierarchy classes.
+            if (this.isLLMError) {
+                className += " o-llm-message-error";
+            }
+            if (this.isLLMStep) {
+                className += " o-llm-step";
+                className += this.isStepDrawerOpen ? " o-llm-step-open" : " o-llm-step-collapsed";
+            }
+            if (this.isLLMFinalAnswer) {
+                className += " o-llm-final-answer";
+            }
+            // UI-06 S1 — progress notifications render as slim status lines.
+            if (this.isLLMProgress) {
+                className += " o-llm-message-status";
+            }
+        }
+
+        return className;
+    },
+
+    /**
+     * UI-07 — König Intelligence avatar for AI-side messages. For
+     * ``llm.thread`` messages where the AI is the author (assistant, tool, or
+     * progress-notification without ``llm_role``), return the branded app icon
+     * instead of the generic grey person avatar. User messages keep the user's
+     * own avatar (delegates to ``super``).
+     *
+     * OCB precedent: ``message.js:238-253`` ``authorAvatarUrl`` getter —
+     * delegates to ``message.author.avatarUrl`` when an author exists, else
+     * ``store.DEFAULT_AVATAR``. We intercept only for AI-side ``llm.thread``
+     * messages (no human author on those — ``author_id=False``).
+     */
+    get authorAvatarUrl() {
+        if (this.isLLMMessage && this.llmRole !== "user") {
+            return LLM_AVATAR_URL;
+        }
+        return super.authorAvatarUrl;
+    },
+
+    /**
+     * P-CHAT M2: merge this component's ``className`` getter into the root
+     * class set. The base ``attClass`` only forwards ``props.className``
+     * (from the Thread's ``getMessageClass``); it does NOT include this
+     * component's ``className`` getter, so without this override the
+     * hierarchy classes added there (``o-llm-step``, ``o-llm-step-collapsed``
+     * / ``-open``, ``o-llm-message-error``, ``o-llm-final-answer``) would
+     * never reach the DOM. Non-LLM messages: ``className`` returns ``""``
+     * → base ``attClass`` returned unchanged.
+     */
+    get attClass() {
+        const base = super.attClass;
+        const extra = this.className;
+        if (!extra) {
+            return base;
+        }
+        return { ...base, [extra]: true };
+    },
 });
 
 /**
@@ -306,41 +370,38 @@ patch(Message.prototype, {
  * NOTE: This is NOT the component - this is the data model that holds message data
  */
 patch(MessageModel.prototype, {
-  setup() {
-    super.setup(...arguments);
-    // P-CHAT M2: register is_error as a Mail Store field so the value
-    // sent by _extras_to_store is populated on the record (and defaults
-    // to undefined for non-error messages). Without this declaration the
-    // field-detection scan in make_store.js does not see it and the
-    // frontend isLLMError classification silently never fires. Declared
-    // inside setup() per the mail-store field-registration rule.
-    this.is_error = Record.attr();
-  },
+    setup() {
+        super.setup(...arguments);
+        // P-CHAT M2: register is_error as a Mail Store field so the value
+        // sent by _extras_to_store is populated on the record (and defaults
+        // to undefined for non-error messages). Without this declaration the
+        // field-detection scan in make_store.js does not see it and the
+        // frontend isLLMError classification silently never fires. Declared
+        // inside setup() per the mail-store field-registration rule.
+        this.is_error = Record.attr();
+    },
 
-  /**
-   * Override computeIsEmpty for LLM messages with tool calls or body_json
-   * @returns {Boolean} True if message is empty
-   */
-  computeIsEmpty() {
-    // For LLM messages, apply custom logic
-    if (this.model === "llm.thread") {
-      // Assistant messages with tool calls are never empty
-      if (
-        this.llm_role === "assistant" &&
-        this.body_json?.tool_calls?.length > 0
-      ) {
-        return false;
-      }
+    /**
+     * Override computeIsEmpty for LLM messages with tool calls or body_json
+     * @returns {Boolean} True if message is empty
+     */
+    computeIsEmpty() {
+        // For LLM messages, apply custom logic
+        if (this.model === "llm.thread") {
+            // Assistant messages with tool calls are never empty
+            if (this.llm_role === "assistant" && this.body_json?.tool_calls?.length > 0) {
+                return false;
+            }
 
-      // Tool messages with body_json are never empty
-      if (this.llm_role === "tool" && this.body_json) {
-        return false;
-      }
-    }
+            // Tool messages with body_json are never empty
+            if (this.llm_role === "tool" && this.body_json) {
+                return false;
+            }
+        }
 
-    // Use original computation for other messages
-    return super.computeIsEmpty();
-  },
+        // Use original computation for other messages
+        return super.computeIsEmpty();
+    },
 });
 
 /**
@@ -353,14 +414,14 @@ patch(MessageModel.prototype, {
  * clean on every form factor. Regular mail/discuss messages are untouched.
  */
 patch(MessageActionMenuMobile.prototype, {
-  setup() {
-    super.setup();
-    if (this.props.message?.model === "llm.thread") {
-      this.messageActions = {
-        get actions() {
-          return [];
-        },
-      };
-    }
-  },
+    setup() {
+        super.setup();
+        if (this.props.message?.model === "llm.thread") {
+            this.messageActions = {
+                get actions() {
+                    return [];
+                },
+            };
+        }
+    },
 });

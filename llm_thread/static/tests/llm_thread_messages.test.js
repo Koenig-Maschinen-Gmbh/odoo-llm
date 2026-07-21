@@ -2,30 +2,35 @@
 
 import {
     buildOptimisticMessageBody,
+    buildTransientStatusMessage,
     linkMessagesToThread,
     removeOptimisticMessageFromThread,
 } from "../src/utils/llm_thread_messages";
+import { isLLMProgressMessage, isLLMStepMessage } from "../src/utils/llm_message_classify";
 import { describe, expect, test } from "@odoo/hoot";
 
 /**
- * P0 reliability — unit tests for the optimistic-message lifecycle helpers.
+ * P0 reliability + UI-05 — unit tests for the optimistic-message lifecycle
+ * helpers and the transient status message builder.
  *
  * These helpers are pure (they take a thread record + a ``getMessage``
  * callable, never import a service), so they can be exercised directly in
- * Hoot without mounting the mail store. They are the contract for three
- * fixes in ``llm_store_service.js``:
+ * Hoot without mounting the mail store. They are the contract for:
  *
  *  1. ``buildOptimisticMessageBody`` — raw user text is HTML-escaped before
  *     being interpolated into the optimistic ``<p>…</p>`` body, so pasted
  *     markup renders as text (XSS / parsing defense).
- *  2. ``linkMessagesToThread`` — on ``llm.thread/new_message`` the inserted
+ *  2. ``buildTransientStatusMessage`` (UI-05) — builds the ephemeral
+ *     "Analyzing your request…" status message data object, with
+ *     ``is_transient: true`` and ``message_type: 'notification'`` so it
+ *     renders as a slim one-line status row (UI-06 S2).
+ *  3. ``linkMessagesToThread`` — on ``llm.thread/new_message`` the inserted
  *     mail.message records are linked into the target thread's reactive
- *     ``messages`` collection with a dedupe-by-id guard (mirrors the OCB
- *     ``discuss.channel/new_message`` handler + the SSE ``message_create``
- *     path).
- *  3. ``removeOptimisticMessageFromThread`` — the optimistic temp message is
- *     dropped from the thread on ``message_create`` AND on EventSource
- *     error / start failure, so ghosts never persist.
+ *     ``messages`` collection with a dedupe-by-id guard.
+ *  4. ``removeOptimisticMessageFromThread`` — the optimistic temp message
+ *     (and the transient status message) is dropped from the thread on
+ *     ``message_create`` / ``new_message`` AND on EventSource error /
+ *     start-failure, so ghosts never persist.
  *
  * Hoot API notes: there is no ``.toContain`` / ``.toBeTruthy`` in Hoot — use
  * ``expect(str.includes(x)).toBe(true)`` / ``expect(Boolean(x)).toBe(true)``
@@ -104,6 +109,101 @@ describe("buildOptimisticMessageBody", () => {
     });
 });
 
+// --- UI-05: transient status message builder --------------------------------
+
+describe("buildTransientStatusMessage", () => {
+    test("returns a message with the correct shape", () => {
+        const msg = buildTransientStatusMessage({
+            id: 42.01,
+            threadId: 510,
+            text: "Analyzing your request…",
+            date: "2026-07-21T10:00:00.000Z",
+        });
+        expect(msg.id).toBe(42.01);
+        expect(msg.model).toBe("llm.thread");
+        expect(msg.res_id).toBe(510);
+        expect(msg.llm_role).toBe(false);
+        expect(msg.author_id).toBe(false);
+        expect(msg.is_error).toBe(false);
+        expect(msg.is_transient).toBe(true);
+        expect(msg.message_type).toBe("notification");
+        expect(msg.date).toBe("2026-07-21T10:00:00.000Z");
+    });
+
+    test("wraps text in a <p> tag (matching optimistic body shape)", () => {
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "Working…",
+        });
+        expect(msg.body).toBe("<p>Working…</p>");
+    });
+
+    test("escapes HTML in the text (XSS defense)", () => {
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "<script>alert(1)</script>",
+        });
+        expect(msg.body.includes("<script>")).toBe(false);
+        expect(msg.body).toMatch(/&lt;script&gt;/);
+    });
+
+    test("escapes ampersands", () => {
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "Analyzing A & B",
+        });
+        expect(msg.body).toBe("<p>Analyzing A &amp; B</p>");
+    });
+
+    test("defaults date to current time when not provided", () => {
+        const before = Date.now();
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "test",
+        });
+        const after = Date.now();
+        const msgDate = new Date(msg.date).getTime();
+        expect(msgDate >= before).toBe(true);
+        expect(msgDate <= after).toBe(true);
+    });
+
+    test("is_transient + message_type='notification' + no llm_role → classified as progress", () => {
+        // The transient status message must be classified as a progress
+        // message by isLLMProgressMessage, so it picks up the
+        // o-llm-message-status CSS class and renders as a slim status line.
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "Analyzing…",
+        });
+        expect(isLLMProgressMessage(msg)).toBe(true);
+    });
+
+    test("is_transient=true so OCB hides the date in the sidebar/header", () => {
+        // OCB message.xml: t-if="!message.is_transient" on date elements.
+        // The transient status message should not show a timestamp.
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "test",
+        });
+        expect(msg.is_transient).toBe(true);
+    });
+
+    test("no llm_role so it is NOT classified as a step (stays outside drawer)", () => {
+        const msg = buildTransientStatusMessage({
+            id: 1,
+            threadId: 1,
+            text: "test",
+        });
+        expect(isLLMStepMessage(msg)).toBe(false);
+    });
+});
+
 describe("removeOptimisticMessageFromThread", () => {
     test("removes the tracked temp message from the thread", () => {
         const tempMsg = { id: -100 };
@@ -172,6 +272,23 @@ describe("removeOptimisticMessageFromThread", () => {
         // the thread's collection — delete returns false, helper returns false.
         expect(removeOptimisticMessageFromThread({ thread, tempId: -100, getMessage })).toBe(false);
         expect(thread.messages._arr).toHaveLength(0);
+    });
+
+    // UI-05 — the same helper is used to remove the transient status message
+    // (tracked by a fractional temp id, not a negative one). Verify it works
+    // with fractional ids too.
+    test("works with fractional temp ids (transient status messages)", () => {
+        const transientMsg = { id: 42.01 };
+        const thread = makeMockThread([transientMsg, { id: 43 }]);
+        const getMessage = (id) => (id === 42.01 ? transientMsg : null);
+        const removed = removeOptimisticMessageFromThread({
+            thread,
+            tempId: 42.01,
+            getMessage,
+        });
+        expect(removed).toBe(true);
+        expect(thread.messages.some((m) => m.id === 42.01)).toBe(false);
+        expect(thread.messages.some((m) => m.id === 43)).toBe(true);
     });
 });
 

@@ -10,6 +10,11 @@
  * - final answer:            ``llm_role === 'assistant'`` WITHOUT ``body_json.tool_calls``.
  * - error:                   ``is_error`` (failed-run error messages stay
  *   prominent, outside the steps drawer).
+ * - progress notification:   ``message_type === 'notification'`` WITHOUT
+ *   ``llm_role`` — system-style progress messages ("Analyzing…",
+ *   "Dispatching expert…", "…returned results.") posted by the
+ *   orchestration runtime. These render as slim one-line status rows
+ *   (no author header, no avatar sidebar) via ``o-llm-message-status``.
  *
  * Turn grouping: a turn = a user message + every assistant/tool message that
  * follows it, up to the next user message. The steps drawer groups the tool +
@@ -35,6 +40,24 @@ export function isLLMFinalAnswer(msg) {
 
 export function isLLMErrorMessage(msg) {
     return Boolean(msg?.is_error);
+}
+
+/**
+ * UI-06 S1 — A "progress" message is a system-style notification posted by the
+ * orchestration runtime: ``message_type === 'notification'`` with NO
+ * ``llm_role`` (not a tool call, not an assistant turn). These are the
+ * "Analyzing your request…", "Dispatching expert…", "…returned results."
+ * messages that should render as slim one-line status rows — no author
+ * header, no avatar sidebar, muted text.
+ *
+ * Error messages (``is_error``) are NOT progress messages — they stay
+ * prominent with the error styling.
+ */
+export function isLLMProgressMessage(msg) {
+    if (isLLMErrorMessage(msg)) {
+        return false;
+    }
+    return msg?.message_type === "notification" && !msg?.llm_role;
 }
 
 /**
@@ -75,11 +98,11 @@ export function llmTurnIdForMessage(msg, orderedMessages) {
  */
 export function llmStepCountInTurn(msg, orderedMessages) {
     const turnId = llmTurnIdForMessage(msg, orderedMessages);
-    if (turnId == null) {
+    if (turnId === null) {
         return 0;
     }
     return orderedMessages.filter(
-        (m) => llmTurnIdForMessage(m, orderedMessages) === turnId && isLLMStepMessage(m),
+        (m) => llmTurnIdForMessage(m, orderedMessages) === turnId && isLLMStepMessage(m)
     ).length;
 }
 
@@ -98,13 +121,13 @@ export function isLLMFirstStepOfTurn(msg, orderedMessages) {
     const turnId = llmTurnIdForMessage(msg, orderedMessages);
     for (let i = idx - 1; i >= 0; i--) {
         if (orderedMessages[i].llm_role === "user") {
-            break; // reached the user message that opens this turn
+            break; // Reached the user message that opens this turn
         }
         if (
             llmTurnIdForMessage(orderedMessages[i], orderedMessages) === turnId &&
             isLLMStepMessage(orderedMessages[i])
         ) {
-            return false; // an earlier step in the same turn exists
+            return false; // An earlier step in the same turn exists
         }
     }
     return true;
