@@ -1,3 +1,16 @@
+18.0.4.3.1 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+- **FIX**: ``llm.tool.execute()`` — JSON string coercion now handles
+  ``Optional[list]`` / ``Optional[dict]`` type hints. The old code checked
+  ``getattr(expected, '__origin__', expected) in (list, dict)``, but
+  ``typing.Optional[list]`` has ``__origin__ = typing.Union``, so the coercion
+  was silently skipped for all ``param: list = None`` parameters. This caused
+  a 4.1% failure rate on ``koenig_sap_query`` (10/244 calls) when the LLM
+  passed ``domain`` and ``fields`` as JSON strings. Fix uses
+  ``typing.get_origin()`` / ``typing.get_args()`` to unwrap ``Union`` args
+  before checking.
+
 18.0.4.3.0 (2026-07-19)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

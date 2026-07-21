@@ -1,7 +1,7 @@
 import inspect
 import json
 import logging
-from typing import Any, get_type_hints
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from pydantic import create_model
 
@@ -212,8 +212,16 @@ class LLMTool(models.Model):
             if isinstance(value, str):
                 expected = type_hints.get(key)
                 if expected:
-                    origin = getattr(expected, "__origin__", expected)
-                    if origin in (list, dict):
+                    origin = get_origin(expected)
+                    if origin is Union:
+                        # Optional[list] / Optional[dict] — unwrap Union args
+                        union_args = get_args(expected)
+                        if any(a in (list, dict) for a in union_args):
+                            try:
+                                coerced[key] = json.loads(value)
+                            except (json.JSONDecodeError, TypeError):
+                                pass  # let Pydantic produce the error message
+                    elif origin in (list, dict):
                         try:
                             coerced[key] = json.loads(value)
                         except (json.JSONDecodeError, TypeError):
