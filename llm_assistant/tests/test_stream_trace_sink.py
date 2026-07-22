@@ -188,3 +188,211 @@ class TestStreamTraceSink(TransactionCase):
         self.assertEqual(statuses, ["error", "error", "ok"])
         attempts = [t.attempt for t in traces]
         self.assertEqual(attempts, [1, 2, 3])
+
+
+@tagged("post_install", "-at_install")
+class TestStreamTraceMatrix(TransactionCase):
+    """TEL-04 Step 3: degenerate-stream matrix at the CONSUMER boundary.
+
+    Patches the provider boundary (``llm.model.chat``) with fake NORMALIZED
+    streams and lets the REAL ``_handle_streaming_response`` /
+    ``_generate_assistant_response`` run. Asserts the hook-level trace dict
+    content per degenerate shape via a recorder on
+    ``_record_llm_call_trace`` (the plan's hook-assertion hint), so no
+    koenig persistence layer is needed.
+
+    Deviation from the plan table: the committed raise semantics mean
+    degenerate streams RAISE ``TransientLLMError`` (retried, then
+    propagated) — the plan's "returns None" predates that alignment; the
+    tests assert the committed raise + the recorded traces.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.provider = (
+            cls.env["llm.provider"]
+            .sudo()
+            .create(
+                {
+                    "name": "Trace Matrix Test Provider",
+                    "service": "openai",
+                    "api_base": "https://test.example.com/v1",
+                    "api_key": "sk-test-key",
+                }
+            )
+        )
+        cls.model = (
+            cls.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "trace-matrix-test-model",
+                    "provider_id": cls.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        cls.thread = (
+            cls.env["llm.thread"]
+            .sudo()
+            .create(
+                {
+                    "name": "Trace matrix test thread",
+                    "provider_id": cls.provider.id,
+                    "model_id": cls.model.id,
+                }
+            )
+        )
+        cls.thread.with_context(mail_create_nosubscribe=True).message_post(
+            body="Hello, AI!",
+            llm_role="user",
+            author_id=cls.env.user.partner_id.id,
+        )
+        cls.env["ir.config_parameter"].sudo().set_param("llm_assistant.max_retries", 3)
+        cls.env["ir.config_parameter"].sudo().set_param(
+            "llm_assistant.backoff_base", 0.01
+        )
+
+    def _drain(self, gen):
+        """Drain a generator, returning (result, events, exception)."""
+        events = []
+        exc = None
+        result = None
+        try:
+            while True:
+                events.append(next(gen))
+        except StopIteration as e:
+            result = e.value
+        except BaseException as e:  # noqa: BLE001
+            exc = e
+        return result, events, exc
+
+    def _run_with_recorded_traces(self, chat_side_effects):
+        """Run ``_generate_assistant_response`` with mocked chat + a trace
+        recorder on the hook. Returns (result, exc, recorded_traces)."""
+        recorded = []
+
+        def recorder(self_thread, trace):
+            recorded.append(trace)
+
+        def fake_chat(self_model, **kwargs):
+            item = chat_side_effects.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return iter(item)
+
+        with (
+            patch.object(
+                type(self.env["llm.model"]),
+                "chat",
+                autospec=True,
+                side_effect=fake_chat,
+            ),
+            patch.object(type(self.thread), "_record_llm_call_trace", recorder),
+            patch("odoo.addons.llm_assistant.models.llm_thread.time.sleep"),
+        ):
+            gen = self.thread._generate_assistant_response()
+            result, _events, exc = self._drain(gen)
+        return result, exc, recorded
+
+    def test_matrix_reasoning_only_trace(self):
+        """reasoning×5 + finish (every attempt) → raise; per-attempt traces
+        with reasoning=5 / content=0 / message_created False."""
+        reasoning_stream = [{"reasoning": f"r{i}"} for i in range(5)] + [
+            {"finish_reason": "stop"}
+        ]
+        _result, exc, recorded = self._run_with_recorded_traces(
+            [list(reasoning_stream), list(reasoning_stream), list(reasoning_stream)],
+        )
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(len(recorded), 3, "one trace per attempt")
+        self.assertEqual([t["attempt"] for t in recorded], [1, 2, 3])
+        for trace in recorded:
+            self.assertEqual(trace["status"], "error")
+            self.assertEqual(trace["chunks"]["reasoning"], 5, "5 reasoning chunks")
+            self.assertEqual(trace["chunks"]["content"], 0, "no content chunks")
+            self.assertEqual(trace["chunks"]["tool"], 0, "no tool chunks")
+            self.assertFalse(trace["message_created"], "no message created")
+            self.assertTrue(trace.get("finish_ts"), "finish_ts recorded")
+            self.assertEqual(trace["error_class"], "TransientLLMError")
+
+    def test_matrix_empty_trace(self):
+        """A zero-chunk stream (every attempt) → raise; traces all-zero counters."""
+        _result, exc, recorded = self._run_with_recorded_traces([[], [], []])
+        self.assertIsInstance(exc, TransientLLMError)
+        self.assertEqual(len(recorded), 3, "one trace per attempt")
+        for trace in recorded:
+            self.assertEqual(trace["status"], "error")
+            self.assertEqual(trace["chunks"], {"content": 0, "reasoning": 0, "tool": 0})
+            self.assertEqual(trace["content_length"], 0)
+            self.assertEqual(trace["reasoning_length"], 0)
+            self.assertFalse(trace["message_created"])
+            self.assertTrue(
+                trace.get("finish_ts"), "finish_ts recorded at the raise site"
+            )
+
+    def test_matrix_content_trace(self):
+        """content×3 + finish → message created; trace content=3, ok."""
+        healthy = [
+            {"content": "a"},
+            {"content": "b"},
+            {"content": "c"},
+            {"finish_reason": "stop"},
+        ]
+        result, exc, recorded = self._run_with_recorded_traces([healthy])
+        self.assertIsNone(exc, "healthy stream succeeds")
+        self.assertIsNotNone(result, "assistant message returned")
+        self.assertEqual(len(recorded), 1, "single attempt")
+        trace = recorded[0]
+        self.assertEqual(trace["status"], "ok")
+        self.assertTrue(trace["message_created"])
+        self.assertEqual(trace["message_id"], result.id)
+        self.assertEqual(trace["chunks"]["content"], 3, "3 content chunks")
+        self.assertEqual(trace["finish_reason"], "stop")
+
+    def test_matrix_usage_finish_captured(self):
+        """content×1 + usage + finish → trace usage + finish_reason populated."""
+        stream = [
+            {"content": "answer"},
+            {"usage": {"input": 100, "output": 5}},
+            {"finish_reason": "stop"},
+        ]
+        _result, exc, recorded = self._run_with_recorded_traces([stream])
+        self.assertIsNone(exc)
+        self.assertEqual(len(recorded), 1)
+        trace = recorded[0]
+        self.assertEqual(
+            trace.get("usage"), {"input": 100, "output": 5}, "usage captured"
+        )
+        self.assertEqual(trace.get("finish_reason"), "stop", "finish_reason captured")
+
+    def test_matrix_hook_never_raises(self):
+        """Telemetry discipline: a raising hook must not break the stream —
+        the exception is swallowed (debug log) and the message is created."""
+        calls = []
+
+        def raising_hook(self_thread, trace):
+            calls.append(trace)
+            raise RuntimeError("hook exploded")
+
+        healthy = [{"content": "still works"}, {"finish_reason": "stop"}]
+
+        def fake_chat(self_model, **kwargs):
+            return iter(healthy)
+
+        with (
+            patch.object(
+                type(self.env["llm.model"]),
+                "chat",
+                autospec=True,
+                side_effect=fake_chat,
+            ),
+            patch.object(type(self.thread), "_record_llm_call_trace", raising_hook),
+            patch("odoo.addons.llm_assistant.models.llm_thread.time.sleep"),
+        ):
+            gen = self.thread._generate_assistant_response()
+            result, _events, exc = self._drain(gen)
+        self.assertIsNone(exc, "hook exception must not propagate")
+        self.assertIsNotNone(result, "message created despite hook failure")
+        self.assertEqual(len(calls), 1, "hook was attempted once (ok attempt)")

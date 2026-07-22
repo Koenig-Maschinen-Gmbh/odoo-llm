@@ -1,3 +1,12 @@
+18.0.1.13.3 (2026-07-22)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] TEL-04 degenerate-stream harness (test-only):
+  ``TestStreamTraceMatrix`` — consumer-boundary matrix driving the REAL
+  ``_handle_streaming_response`` / ``_generate_assistant_response`` with
+  fake normalized streams; hook-level trace assertions per degenerate
+  shape + a hook-never-raises telemetry-discipline test.
+
 18.0.1.13.2 (2026-07-22)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

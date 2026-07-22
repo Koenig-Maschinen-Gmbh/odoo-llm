@@ -1,3 +1,12 @@
+18.0.1.6.3 (2026-07-22)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] TEL-04 degenerate-stream harness (test-only):
+  ``TestOpenAIDegenerateStreamMatrix`` — provider-boundary fakes for
+  healthy, reasoning-only, empty, usage, mid-stream-error, and
+  tool-chunks-with-bad-finish stream shapes. A degenerate provider stream
+  can never go silently green at this layer again.
+
 18.0.1.6.2 (2026-07-22)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
