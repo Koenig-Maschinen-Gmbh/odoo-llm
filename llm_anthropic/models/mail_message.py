@@ -23,64 +23,7 @@ class MailMessage(models.Model):
             body = tools.html2plaintext(body)
 
         if self.is_llm_user_message()[self]:
-            texts = self._get_text_attachments()
-
-            # Only include images/PDFs if model supports multimodal
-            if is_multimodal:
-                images = self._get_image_attachments()
-                pdfs = self._get_pdf_attachments()
-            else:
-                images = []
-                pdfs = []
-
-            has_attachments = images or pdfs or texts
-
-            if has_attachments:
-                content = []
-
-                for img in images:
-                    content.append(
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": img["mimetype"],
-                                "data": img["data"],
-                            },
-                        },
-                    )
-
-                for pdf in pdfs:
-                    content.append(
-                        {
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": pdf["mimetype"],
-                                "data": pdf["data"],
-                            },
-                        },
-                    )
-
-                text_parts = []
-                if body and body.strip():
-                    text_parts.append(body.strip())
-
-                for txt in texts:
-                    text_parts.append(f"--- {txt['name']} ---\n{txt['content']}")
-
-                if text_parts:
-                    content.append({"type": "text", "text": "\n\n".join(text_parts)})
-                elif images or pdfs:
-                    content.append(
-                        {"type": "text", "text": "Please analyze these files."},
-                    )
-
-                return {"role": "user", "content": content}
-
-            if not body or not body.strip():
-                return None
-            return {"role": "user", "content": body}
+            return self._anthropic_format_llm_user_message(body, is_multimodal)
 
         if self.is_llm_assistant_message()[self]:
             content_blocks = []
@@ -142,4 +85,89 @@ class MailMessage(models.Model):
                 ],
             }
 
+        if self.is_llm_system_message()[self]:
+            return self._anthropic_format_llm_system_message(body)
         return None
+
+    def _anthropic_format_llm_user_message(self, body, is_multimodal):
+        """Serialize an ``llm_role="user"`` message (with optional attachments)."""
+        texts = self._get_text_attachments()
+
+        # Only include images/PDFs if model supports multimodal
+        if is_multimodal:
+            images = self._get_image_attachments()
+            pdfs = self._get_pdf_attachments()
+        else:
+            images = []
+            pdfs = []
+
+        has_attachments = images or pdfs or texts
+
+        if has_attachments:
+            content = []
+
+            for img in images:
+                content.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img["mimetype"],
+                            "data": img["data"],
+                        },
+                    },
+                )
+
+            for pdf in pdfs:
+                content.append(
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": pdf["mimetype"],
+                            "data": pdf["data"],
+                        },
+                    },
+                )
+
+            text_parts = []
+            if body and body.strip():
+                text_parts.append(body.strip())
+
+            for txt in texts:
+                text_parts.append(f"--- {txt['name']} ---\n{txt['content']}")
+
+            if text_parts:
+                content.append({"type": "text", "text": "\n\n".join(text_parts)})
+            elif images or pdfs:
+                content.append(
+                    {"type": "text", "text": "Please analyze these files."},
+                )
+
+            return {"role": "user", "content": content}
+
+        if not body or not body.strip():
+            return None
+        return {"role": "user", "content": body}
+
+    def _anthropic_format_llm_system_message(self, body):
+        """Serialize an ``llm_role="system"`` message for the Anthropic payload.
+
+        Mid-conversation context-injection messages (e.g. a capability-gap
+        bridge posting media-analysis results with ``llm_role="system"``).
+        Without this branch they fell through to ``return None`` and were
+        SILENTLY DROPPED from the provider payload — the model answered as
+        if the injected context did not exist. Parity port of the
+        ``llm_openai`` fix ``_openai_format_llm_system_message``.
+
+        Serialized as an attributed user message: Anthropic allows only a
+        single top-level ``system`` parameter (used for the prompt), so
+        mid-conversation "system" notes must ride as user content. The
+        merge of consecutive user messages in
+        ``_anthropic_merge_consecutive_user_messages`` keeps the required
+        user/assistant alternation intact.
+        """
+        if not body or not body.strip():
+            return None
+        return {"role": "user", "content": body}
+
