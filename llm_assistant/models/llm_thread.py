@@ -613,7 +613,7 @@ class LLMThread(models.Model):
             _logger.debug("llm trace finalize failed", exc_info=True)
 
     def _generate_assistant_response(
-        self, final_answer=False, *, loop_control_check=None
+        self, final_answer=False, *, loop_control_check=None, max_stream_duration_s=None
     ):
         """Generate assistant response with transient-error retry.
 
@@ -640,6 +640,12 @@ class LLMThread(models.Model):
         answer now without calling more tools — while keeping tools available,
         so models that emit native tool-call syntax as text when constrained
         still behave.
+
+        ``max_stream_duration_s`` (PERF-09) optionally overrides the
+        total-duration streaming cap for THIS call (seconds). ``None`` →
+        resolved per attempt by the handler via
+        :meth:`_get_max_stream_duration_s` (ICP, default 180). A value
+        ``<= 0`` disables the cap for this call.
 
         TEL-01: every attempt is traced. ``request_trace`` (fingerprint) is
         built per attempt; ``sink`` is filled incrementally by the response
@@ -734,6 +740,7 @@ class LLMThread(models.Model):
                         raw_response,
                         loop_control_check=loop_control_check,
                         trace_sink=sink,
+                        max_stream_duration_s=max_stream_duration_s,
                     )
                 else:
                     assistant_message = yield from self._handle_non_streaming_response(
@@ -996,8 +1003,31 @@ class LLMThread(models.Model):
 
         return False
 
+    def _get_max_stream_duration_s(self):
+        """Resolve the total-duration streaming cap in seconds (PERF-09).
+
+        Default source: ICP ``llm_assistant.max_stream_duration_s`` (180).
+        Extensions (e.g. the koenig orchestrator) override this hook to read
+        their own config namespace. A resolved value ``<= 0`` disables the
+        cap. Never raises — a broken config read falls back to 180.
+        """
+        try:
+            return float(
+                self.env["ir.config_parameter"]
+                .sudo()
+                .get_param("llm_assistant.max_stream_duration_s", 180)
+            )
+        except Exception:  # noqa: BLE001 — config read must not break generation
+            _logger.debug("max_stream_duration_s ICP read failed", exc_info=True)
+            return 180.0
+
     def _handle_streaming_response(  # noqa: C901
-        self, stream_response, *, loop_control_check=None, trace_sink=None
+        self,
+        stream_response,
+        *,
+        loop_control_check=None,
+        trace_sink=None,
+        max_stream_duration_s=None,
     ):
         """Handle streaming response from LLM provider with tool call processing.
 
@@ -1008,6 +1038,26 @@ class LLMThread(models.Model):
         tool-call boundary or ``while`` iteration boundary. In ``immediate``
         mode (or when no ``mode`` is returned), the check raises at every
         chunk boundary (the Phase 2 behaviour, reserved for hard kills).
+
+        PERF-09 (total-duration cap): at each chunk boundary, when the
+        stream's total elapsed time exceeds ``max_stream_duration_s``
+        (kwarg → :meth:`_get_max_stream_duration_s` ICP fallback, default
+        180; ``<= 0`` disables), the stream is closed and a
+        ``TransientLLMError`` is raised. This kills pathological
+        reasoning explosions (observed 200–1200 reasoning chunks over
+        48–325 s on 2026-07-22) that no per-read SDK timeout can catch —
+        chunks keep arriving, the stream just never finishes. The raise is
+        classified transient, so the retry loop in
+        ``_generate_assistant_response`` retries with backoff (a warm
+        provider instance usually answers in time). Partial-content
+        handling: any already-posted partial assistant message is KEPT
+        (never deleted); the error is annotated on the trace
+        (``error_class``/``error_message`` via ``_finalize_llm_trace``).
+        When a kill happens mid-content and the retry then succeeds, the
+        retry posts a FRESH assistant message (the partial one stays as
+        the visible record of the killed attempt). The cancel check keeps
+        precedence — ``GenerationCancelled`` is never swallowed by the
+        cap path.
 
         TEL-01: when ``trace_sink`` (a dict) is passed by the caller, it is
         filled incrementally with the stream histogram (content/reasoning/tool
@@ -1025,6 +1075,12 @@ class LLMThread(models.Model):
         # TEL-01: sink init (keys only — no behavior change). t0 is the
         # monotonic clock for ttft/duration; the sink carries it for _fill_end.
         t0 = time.monotonic()
+        # PERF-09: resolve the cap once per attempt (not per chunk).
+        max_stream_s = (
+            max_stream_duration_s
+            if max_stream_duration_s is not None
+            else self._get_max_stream_duration_s()
+        )
         if trace_sink is not None:
             trace_sink.setdefault("chunks", {"content": 0, "reasoning": 0, "tool": 0})
             trace_sink.setdefault("content_length", 0)
@@ -1056,6 +1112,38 @@ class LLMThread(models.Model):
             if self._check_loop_control_streaming(loop_control_check):
                 raise GenerationCancelled(
                     _("Generation cancelled by loop-control hook."),
+                )
+
+            # PERF-09: total-duration cap. Fires regardless of cancel mode —
+            # it is a safety net, not a cancel. The cancel check above keeps
+            # precedence (a cancelled run never reports a duration kill).
+            if max_stream_s > 0 and (time.monotonic() - t0) > max_stream_s:
+                elapsed = time.monotonic() - t0
+                _logger.warning(
+                    "Thread %s: stream killed by total-duration cap "
+                    "(%.1fs elapsed > %.1fs cap)",
+                    self.id,
+                    elapsed,
+                    max_stream_s,
+                )
+                close = getattr(stream_response, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001 — best-effort close
+                        _logger.debug(
+                            "stream close after duration cap failed", exc_info=True
+                        )
+                # Partial content is KEPT (message stays posted); the error
+                # is annotated on the trace by the caller's finalize step.
+                _sink_fill_end(message)
+                raise TransientLLMError(
+                    _(
+                        "LLM stream exceeded the total-duration cap of %(cap)s s "
+                        "(killed after %(elapsed).1f s).",
+                        cap=max_stream_s,
+                        elapsed=elapsed,
+                    ),
                 )
 
             # TEL-01: record first-chunk timestamp (any chunk type counts).

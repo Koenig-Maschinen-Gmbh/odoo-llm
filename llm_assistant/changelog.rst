@@ -1,3 +1,24 @@
+18.0.1.14.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] PERF-09 total-duration streaming cap: at each chunk
+  boundary, when the stream's total elapsed time exceeds the cap (default
+  180 s via ICP ``llm_assistant.max_stream_duration_s``; ``<= 0``
+  disables), the stream is closed and a ``TransientLLMError`` is raised —
+  the existing retry loop retries with backoff, so pathological
+  reasoning explosions (200–1200 reasoning chunks over 48–325 s) are
+  killed and re-attempted on a warm provider instance instead of
+  blocking a worker for minutes. New per-call
+  ``max_stream_duration_s`` kwarg on ``_generate_assistant_response`` /
+  ``_handle_streaming_response`` (threaded through, wins over the ICP);
+  new overridable ``_get_max_stream_duration_s`` resolver hook.
+  Partial-content handling: an already-posted partial assistant message
+  is kept (never deleted), the kill is annotated on the trace
+  (``error_class`` / ``error_message`` via ``_finalize_llm_trace``), and
+  a successful retry posts a fresh assistant message.
+  ``GenerationCancelled`` keeps precedence and is never swallowed by the
+  cap path.
+
 18.0.1.13.3 (2026-07-22)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
