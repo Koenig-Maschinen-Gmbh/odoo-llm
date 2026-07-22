@@ -1,3 +1,15 @@
+18.0.1.6.2 (2026-07-22)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][FIX] ``openai_format_message`` silently dropped
+  ``llm_role="system"`` messages (``return None`` fallthrough). The koenig
+  capability-gap bridge posts media_describe results as system messages —
+  the master model never received the injected context and answered as if
+  no image was attached. New ``_openai_format_llm_system_message`` helper
+  serializes them as attributed user messages (mid-conversation "system"
+  roles are not portable across providers). Found during the 2026-07-21/22
+  hardening run.
+
 18.0.1.6.1 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

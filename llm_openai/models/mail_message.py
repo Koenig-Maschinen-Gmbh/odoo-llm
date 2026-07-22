@@ -146,4 +146,26 @@ class MailMessage(models.Model):
                 "content": content,
             }
             return formatted_message
+
+        if self.is_llm_system_message()[self]:
+            return self._openai_format_llm_system_message(body)
         return None
+
+    def _openai_format_llm_system_message(self, body):
+        """Serialize an ``llm_role="system"`` message for the OpenAI payload.
+
+        Mid-conversation context-injection messages (e.g. the koenig
+        capability-gap bridge posts media_describe results with
+        ``llm_role="system"``). Without this branch they fell through to
+        ``return None`` in :meth:`openai_format_message` and were SILENTLY
+        DROPPED from the provider payload — the model answered as if the
+        injected context (e.g. the image description) did not exist.
+
+        Serialized as an attributed user message: mid-conversation "system"
+        roles are not portable across providers (Anthropic allows only a
+        single top-level system prompt), while the content IS user-visible
+        context the model must ground on.
+        """
+        if not body or not body.strip():
+            return None
+        return {"role": "user", "content": body}
