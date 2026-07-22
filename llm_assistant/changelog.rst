@@ -1,3 +1,15 @@
+18.0.1.13.2 (2026-07-22)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] Tool/assistant wiring clarity: new ``assistant_ids``
+  inverse M2M on ``llm.tool`` (reuses the auto-generated
+  ``llm_assistant_llm_tool_rel`` table — editing either side updates the
+  same rows) + a read-visible "Usage" page on the tool form listing the
+  assistants that whitelist the tool. The assistant form's Tools page
+  gains a "Shared pool" note. Without the inverse view, each assistant's
+  Tools page read as if tools belonged to that assistant exclusively —
+  they are a shared capability pool across assistants and expert profiles.
+
 18.0.1.13.1 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

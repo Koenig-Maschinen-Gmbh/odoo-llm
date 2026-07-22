@@ -5,7 +5,7 @@
     """,
     "description": "Configure AI assistants with specific roles, goals, and tools to enhance AI interactions, plus reusable prompt templates (text, YAML, JSON) with dynamic arguments, multi-step workflows, categories/tags, and context-simulation testing.",
     "category": "Productivity, Discuss",
-    "version": "18.0.1.13.1",
+    "version": "18.0.1.13.2",
     "depends": [
         "base",
         "mail",
@@ -31,6 +31,7 @@
         "views/llm_prompt_tag_views.xml",
         "views/llm_prompt_category_views.xml",
         "views/llm_assistant_views.xml",
+        "views/llm_tool_views.xml",
         "views/llm_thread_views.xml",
         "views/llm_menu_views.xml",
         "wizards/llm_prompt_test_views.xml",

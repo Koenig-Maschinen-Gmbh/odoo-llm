@@ -174,6 +174,8 @@
                             <div class="text-muted px-3 py-2">
                                 Select the tools this assistant may need. These tools will be auto selected when you assign this assistant on LLM Chat Thread.
                                 <br />
+                                <strong>Shared pool:</strong> tools are not owned by one assistant — the same tool can be whitelisted by any number of assistants and expert profiles. This page is only this assistant's whitelist (see the tool form's Usage page for the inverse).
+                                <br />
                                 <strong
                 >Max Tool Calls:</strong> Prevents infinite loops by limiting consecutive tool executions (default: 5).
                             </div>

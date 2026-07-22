@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- Tool form: make the shared-pool nature of tools visible. Without an
+         inverse list, each assistant's Tools page reads as if tools belonged
+         to that assistant exclusively (they don't — they are shared). -->
+    <record id="view_llm_tool_form_assistant_usage" model="ir.ui.view">
+        <field name="name">llm.tool.form.assistant.usage</field>
+        <field name="model">llm.tool</field>
+        <field name="inherit_id" ref="llm_tool.view_llm_tool_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Usage" name="usage_assistants">
+                    <group string="Used by Assistants">
+                        <field name="assistant_ids" nolabel="1" colspan="2"
+                               widget="many2many_tags" options="{'no_create': True}"/>
+                        <div class="text-muted" colspan="2">
+                            Tools are a shared capability pool — one tool can be
+                            whitelisted by any number of assistants and expert
+                            profiles. This list is the inverse of each assistant's
+                            Tools page; editing here updates the same relation.
+                        </div>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
