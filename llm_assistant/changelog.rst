@@ -1,3 +1,11 @@
+18.0.1.16.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] P2-a per-call reasoning_effort kwarg on
+  ``_generate_assistant_response`` — threaded into the provider's D2
+  precedence (per-call kwarg > model field > provider default). Used by
+  the EFF-02 explicit synthesis stage (koenig_ai_orchestrator 18.0.0.38.0).
+
 18.0.1.15.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -627,7 +627,12 @@ class LLMThread(models.Model):
         return self.env["llm.model"]
 
     def _generate_assistant_response(
-        self, final_answer=False, *, loop_control_check=None, max_stream_duration_s=None
+        self,
+        final_answer=False,
+        *,
+        loop_control_check=None,
+        max_stream_duration_s=None,
+        reasoning_effort=None,
     ):
         """Generate assistant response with transient-error retry.
 
@@ -670,6 +675,13 @@ class LLMThread(models.Model):
         resolved per attempt by the handler via
         :meth:`_get_max_stream_duration_s` (ICP, default 180). A value
         ``<= 0`` disables the cap for this call.
+
+        ``reasoning_effort`` (P2-a / EFF-02) optionally overrides the
+        reasoning effort for THIS call (e.g. the explicit synthesis
+        stage). Passed through to the provider's D2 precedence (per-call
+        kwarg > model field > provider default). Chain models each get
+        the same per-call value — their own effort profile applies when
+        it is unset.
 
         TEL-01: every attempt is traced. ``request_trace`` (fingerprint) is
         built per attempt; ``sink`` is filled incrementally by the response
@@ -720,6 +732,10 @@ class LLMThread(models.Model):
             chat_kwargs = self._prepare_chat_kwargs(
                 message_history, use_streaming, final_answer=final_answer
             )
+            # P2-a (EFF-02): per-call effort override — threaded into the
+            # provider's D2 precedence (per-call kwarg > model field).
+            if reasoning_effort:
+                chat_kwargs["reasoning_effort"] = reasoning_effort
             for attempt in range(max_retries):
                 # TEL-01: per-attempt request trace (fingerprint). Built inside
                 # the retry loop so each attempt gets its own row.
