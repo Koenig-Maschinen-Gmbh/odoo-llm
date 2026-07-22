@@ -3,4 +3,77 @@
     font-size: 0.75rem;
     color: var(--bs-secondary-color, #6c757d);
     background-color: rgba(0, 0, 0, 0.02);
+
+    // UI-09 H1 — Live phase indicator. The leftmost element in the HUD,
+    // showing the current orchestration phase. Active phases get a spinner
+    // icon and a slightly bolder text color so the eye is drawn to "what's
+    // happening right now".
+    .o-llm-hud-phase {
+        font-weight: 500;
+        color: var(--bs-secondary-color, #6c757d);
+        white-space: nowrap;
+
+        // Active phase — slightly more prominent.
+        &.o-llm-hud-phase-active {
+            color: var(--bs-primary, #0d6efd);
+        }
+
+        // Elapsed time (mm:ss) — muted, smaller, next to the phase label.
+        .o-llm-hud-elapsed {
+            font-size: 0.7rem;
+            font-variant-numeric: tabular-nums;
+            margin-left: 0.25rem;
+        }
+    }
+
+    // UI-12 — Run-health indicators. Subtle, muted spans between the phase
+    // indicator and the run-summary chip: live experts-running (pulsing dot),
+    // cumulative tool calls, error count (red tint via ``text-danger``).
+    .o-llm-hud-health {
+        white-space: nowrap;
+
+        i {
+            margin-right: 0.25rem;
+        }
+
+        &.o-llm-hud-health-errors {
+            font-weight: 500;
+        }
+    }
+
+    // Pulsing dot for "N experts running" — draws the eye without animation
+    // noise (1.2s ease, opacity only).
+    .o-llm-hud-pulse {
+        font-size: 0.45rem;
+        vertical-align: middle;
+        animation: o-llm-hud-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes o-llm-hud-pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.25;
+        }
+    }
+
+    // UI-09 H2 — Run-summary chip. A compact badge that appears after a run
+    // completes showing "✓ N tools · N experts · Ns". Auto-dismisses after
+    // 30s (handled in JS via getRunSummary). Clickable to open the steps
+    // drawer. Styled as a subtle, non-intrusive pill — it's informational,
+    // not a call-to-action.
+    .o-llm-hud-summary {
+        font-size: 0.7rem;
+        font-weight: 500;
+        padding: 0.15rem 0.5rem;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+
+        &:hover {
+            background-color: rgba(var(--bs-primary-rgb, 7, 103, 228), 0.1) !important;
+            color: var(--bs-primary, #0d6efd) !important;
+        }
+    }
 }

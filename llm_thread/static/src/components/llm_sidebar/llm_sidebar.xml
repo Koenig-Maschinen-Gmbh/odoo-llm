@@ -53,6 +53,16 @@
                     >
                         <i class="fa fa-archive" />
                     </button>
+                    <!-- UI-11: reveal expert sub-threads for debugging. -->
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-link px-1 py-0"
+                        t-att-class="{ 'active fw-bold': state.showExpertThreads }"
+                        t-on-click="() => this.state.showExpertThreads = !this.state.showExpertThreads"
+                        title="Show expert threads"
+                    >
+                        <i class="fa fa-user-secret" />
+                    </button>
                     <button
                         t-if="!props.isMobile"
                         type="button"
@@ -183,7 +193,7 @@
                                         'o-llm-thread-selected': state.selectedThreadIds[thread.id],
                                     }"
                                     t-on-click="() => this.selectThread(thread.id)"
-                                    t-att-title="thread.name"
+                                    t-att-title="threadTooltip(thread)"
                                 >
                                     <div class="d-flex align-items-center gap-1">
                                         <input
@@ -194,15 +204,17 @@
                                             t-on-click.stop="() => this.toggleSelectThread(thread.id)"
                                         />
                                         <span class="text-truncate flex-grow-1" t-out="thread.name" />
-                                        <span class="flex-shrink-0 text-muted small d-flex align-items-center gap-1">
-                                            <!-- P-CHAT M3: live run feedback (compact inline) -->
+                                        <span class="o-llm-thread-status flex-shrink-0 d-flex align-items-center gap-1">
+                                            <!-- UI-08 B2 + P-CHAT M3: persistent status icon per thread.
+                                                 idle = no icon, running = spinner, error = red dot,
+                                                 done = green check (fades after 10s via CSS). -->
                                             <t t-if="threadElapsedLabel(thread.id)">
                                                 <i class="fa fa-circle-o-notch fa-spin text-primary" />
                                                 <t t-out="threadElapsedLabel(thread.id)" />
                                             </t>
                                             <i
                                                 t-elif="threadFinishedFlash(thread.id) === 'done'"
-                                                class="fa fa-check-circle text-success"
+                                                class="fa fa-check-circle text-success o-llm-status-done"
                                                 title="Done"
                                             />
                                             <i
@@ -218,10 +230,6 @@
                                             <i
                                                 t-elif="isStreamingThread(thread.id)"
                                                 class="fa fa-circle-o-notch fa-spin text-primary"
-                                            />
-                                            <span
-                                                t-if="thread.write_date"
-                                                t-out="formatDate(thread.write_date)"
                                             />
                                         </span>
                                     </div>

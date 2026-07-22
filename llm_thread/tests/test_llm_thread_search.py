@@ -146,6 +146,30 @@ class TestLlmThreadSearch(TransactionCase):
         self.assertIn("tag_ids", match)
         self.assertEqual(match["tag_ids"][0]["name"], "UX-Tag")
 
+    def test_store_payload_has_is_expert_subthread(self):
+        """UI-11: ``_thread_store_dict`` ships ``is_expert_subthread``
+        unconditionally (same store-merge rationale as ``active``) so the
+        sidebar can filter expert sub-threads client-side."""
+        thread = self._make_thread(self.user_a, "Regular Thread Report")
+        regular = thread._thread_store_dict(thread)
+        self.assertIn("is_expert_subthread", regular)
+        self.assertFalse(regular["is_expert_subthread"])
+
+        expert_thread = (
+            self.env["llm.thread"]
+            .with_user(self.user_a)
+            .create(
+                {
+                    "name": "Expert: sap_sale_order — probe",
+                    "provider_id": self.provider.id,
+                    "model_id": self.model.id,
+                    "is_expert_subthread": True,
+                }
+            )
+        )
+        payload = expert_thread._thread_store_dict(expert_thread)
+        self.assertTrue(payload["is_expert_subthread"])
+
     # ------------------------------------------------------------------
     # _init_messaging loads archived threads
     # ------------------------------------------------------------------

@@ -5,6 +5,73 @@
             t-if="hasStats"
             class="o-llm-hud px-2 py-1 text-muted small border-top d-flex align-items-center gap-3 flex-shrink-0"
         >
+            <!-- UI-09 H1 — Live phase indicator (leftmost, most visible) -->
+            <span
+                t-if="phaseLabel"
+                class="o-llm-hud-phase d-flex align-items-center gap-1"
+                t-att-class="{ 'o-llm-hud-phase-active': phaseIsActive }"
+            >
+                <i
+                    t-if="phaseIsActive"
+                    class="fa fa-circle-o-notch fa-spin"
+                />
+                <i
+                    t-elif="phaseIsDone"
+                    class="fa fa-check-circle text-success"
+                />
+                <i
+                    t-elif="phaseIsFailed"
+                    class="fa fa-exclamation-circle text-danger"
+                />
+                <t t-out="phaseLabel" />
+                <t t-if="elapsedLabel">
+                    <span class="o-llm-hud-elapsed text-muted" t-out="elapsedLabel" />
+                </t>
+            </span>
+
+            <!-- UI-12 — Run-health indicators: live experts-running count,
+                 cumulative tool calls, and error count. Shown for ALL users
+                 (not debug-only) as a subtle "system health" signal; only
+                 non-zero values render (same pattern as tokens/cost spans). -->
+            <span
+                t-if="runHealth.experts"
+                class="o-llm-hud-health"
+                title="Experts currently running"
+            >
+                <i class="fa fa-circle o-llm-hud-pulse text-primary" />
+                <t t-out="runHealth.experts" />
+                expert<t t-if="runHealth.experts !== 1">s</t> running
+            </span>
+            <span
+                t-if="runHealth.tools"
+                class="o-llm-hud-health"
+                title="Tool calls in this run"
+            >
+                <i class="fa fa-wrench" />
+                <t t-out="runHealth.tools" />
+                tool call<t t-if="runHealth.tools !== 1">s</t>
+            </span>
+            <span
+                t-if="runHealth.errors"
+                class="o-llm-hud-health o-llm-hud-health-errors text-danger"
+                title="Errors in this run"
+            >
+                <i class="fa fa-exclamation-triangle" />
+                <t t-out="runHealth.errors" />
+                error<t t-if="runHealth.errors !== 1">s</t>
+            </span>
+
+            <!-- UI-09 H2 — Run-summary chip (auto-dismisses after 30s) -->
+            <span
+                t-if="runSummaryLabel"
+                class="o-llm-hud-summary badge bg-light text-muted border"
+                t-on-click="() => this._onSummaryClick()"
+                title="Click to open the steps drawer"
+            >
+                <t t-out="runSummaryLabel" />
+            </span>
+
+            <!-- Existing stats spans -->
             <span t-if="state.stats.model_name" class="text-truncate">
                 <i class="fa fa-microchip me-1" />
                 <t t-out="state.stats.model_name" />

@@ -217,36 +217,44 @@ patch(Message.prototype, {
     },
 
     /**
+     * UI-10 — whether the current session runs in debug mode (?debug=1).
+     *
+     * OCB precedent: ``list_renderer.js:1793``
+     * ``get isDebugMode() { return Boolean(odoo.debug); }`` — the
+     * ``odoo.debug`` global is set by the web module from the URL/session
+     * debug flag (``env.js:34`` mirrors it as ``env.debug``). Same global
+     * check as ``export_data_dialog.js:177`` and ``view_button.js:73``.
+     */
+    get isDebugMode() {
+        return Boolean(odoo.debug);
+    },
+
+    /**
      * Whether this turn's steps drawer is expanded (reactive on llmStore).
      *
-     * UI-06 S3 — default behavior: for the latest turn of a RUNNING thread,
-     * the drawer opens automatically so the user sees the live status feed
-     * (tool calls, master narration, progress notifications). Completed turns
-     * and non-latest turns default to collapsed (folded "▸ N work steps").
-     * An explicit user toggle always takes precedence over the default.
+     * UI-10 — debug-aware rendering (replaces the UI-06 S3 defaults):
+     * - Regular users: the drawer NEVER opens. Tool-call details (args,
+     *   results, tool badges) are completely hidden — the whole step
+     *   message is removed from layout via the ``o-llm-step-hidden-user``
+     *   CSS class. Progress status lines (UI-06 S1/S2) tell the story.
+     * - Debug users (?debug=1): every step renders fully expanded — the
+     *   pre-drawer behavior. An explicit click on the drawer toggle still
+     *   folds a turn to "▸ N work steps" for focus.
      */
     get isStepDrawerOpen() {
         const turnId = this.llmTurnId;
         if (turnId === null || !this.llmStore) {
             return false;
         }
-        // Explicit user toggle takes precedence.
+        if (!this.isDebugMode) {
+            return false;
+        }
+        // Debug mode: default fully expanded; explicit toggle still honored.
         const explicit = this.llmStore.stepDrawerOpen[turnId];
         if (explicit !== undefined) {
             return Boolean(explicit);
         }
-        // Default: for the latest turn of a running thread, open the drawer so
-        // the user sees the live status feed. Completed turns default collapsed.
-        const threadId = this.props.thread?.id;
-        if (threadId && this.llmStore.isThreadRunning(threadId)) {
-            const msgs = this.llmOrderedMessages;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-                if (msgs[i].llm_role === "user") {
-                    return msgs[i].id === turnId;
-                }
-            }
-        }
-        return false;
+        return true;
     },
 
     /** Toggle the steps drawer for this message's turn. */
@@ -310,7 +318,15 @@ patch(Message.prototype, {
             }
             if (this.isLLMStep) {
                 className += " o-llm-step";
-                className += this.isStepDrawerOpen ? " o-llm-step-open" : " o-llm-step-collapsed";
+                if (this.isDebugMode) {
+                    className += this.isStepDrawerOpen
+                        ? " o-llm-step-open"
+                        : " o-llm-step-collapsed";
+                } else {
+                    // UI-10 — regular users: step messages are removed from
+                    // layout entirely (progress status lines tell the story).
+                    className += " o-llm-step-collapsed o-llm-step-hidden-user";
+                }
             }
             if (this.isLLMFinalAnswer) {
                 className += " o-llm-final-answer";

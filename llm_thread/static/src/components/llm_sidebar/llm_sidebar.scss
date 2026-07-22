@@ -63,6 +63,36 @@
     &.o-llm-thread-selected {
       background-color: rgba(var(--bs-primary-rgb, 7, 103, 228), 0.08);
     }
+
+    // UI-08 B2 — persistent status icon per thread. The status span replaces
+    // the old persistent date label (now in the tooltip only). Icons:
+    // idle = no icon, running = spinner, error = red dot, done = green check.
+    // The done check fades after 10s via CSS animation — enough time for the
+    // user to glance at the sidebar and see the run finished.
+    .o-llm-thread-status {
+      font-size: 0.7rem;
+      color: var(--bs-secondary-color, #6c757d);
+      min-width: 0;
+    }
+
+    // Done check fades out after 10s. CSS-only — no JS timer needed.
+    .o-llm-status-done {
+      animation: o-llm-status-fade 10s ease-in 0s 1 forwards;
+    }
+  }
+
+  // UI-08 B2 — keyframes for the done-check fade. The icon stays fully
+  // visible for ~8s, then fades to 30% opacity over 2s. It doesn't
+  // disappear entirely (so the user can still see it on a second glance),
+  // but it recedes visually so the sidebar doesn't fill with green checks.
+  @keyframes o-llm-status-fade {
+    0%,
+    80% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.3;
+    }
   }
 
   // Bulk-action toolbar

@@ -6,6 +6,7 @@ import {
     linkMessagesToThread,
     removeOptimisticMessageFromThread,
 } from "../utils/llm_thread_messages";
+import { getVisibleRunSummary } from "../utils/llm_phase";
 import { Deferred } from "@web/core/utils/concurrency";
 import { _t } from "@web/core/l10n/translation";
 import { deserializeDateTime } from "@web/core/l10n/dates";
@@ -499,9 +500,15 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: "Working...",
+                            phase: "analyzing",
                             error: false,
                             run_id: data.run_id || null,
                             orchestration: true,
+                            startedAt: Date.now(),
+                            finishedAt: null,
+                            expertCount: 0,
+                            toolCount: 0,
+                            lastRunSummary: null,
                         });
                         // UI-05 — instant client-side status line. The
                         // real "Analyzing your request…" progress message
@@ -827,48 +834,118 @@ export const llmStoreService = {
                 if (normalizedEvent && normalizedEvent !== "run_started") {
                     this._removeTransientStatusMessage(threadId);
                 }
+                // UI-09 H1 — phase mapping. Each orchestration event maps to a
+                // canonical phase label shown in the HUD:
+                //   run_started      → "analyzing"
+                //   expert_dispatched → "dispatching"
+                //   expert_completed  → "gathering"
+                //   (assistant msg arrives) → "synthesizing" (set in new_message sub)
+                //   run_done          → "done"
+                //   run_failed        → "failed"
+                //   run_cancelled     → "cancelled"
+                //   run_killed        → "killed"
+                //   run_timed_out     → "timed_out"
+                //   run_paused        → "paused"
+                //   run_resumed       → "running" (keeps previous phase)
+                // The phase field is additive to threadRunState — existing
+                // consumers (sidebar) ignore it; the HUD reads it.
+                //
+                // UI-09 H2 — run counters. expertCount and toolCount are
+                // incremented during the run and used for the run-summary chip.
+                // They are reset on run_started and frozen into lastRunSummary
+                // on run_done (auto-dismissed after 30s).
+                const current = this.getThreadRunState(threadId) || {};
                 switch (normalizedEvent) {
                     case "run_started":
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Working...",
+                            phase: "analyzing",
                             startedAt: Date.now(),
                             finishedAt: null,
                             error: false,
                             run_id: runId,
+                            expertCount: 0,
+                            toolCount: 0,
+                            // UI-12 — live health counters (HUD).
+                            expertsRunning: 0,
+                            errorCount: 0,
+                            lastRunSummary: null,
                         });
                         break;
                     case "expert_dispatched":
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Working...",
+                            phase: "dispatching",
                             run_id: runId,
+                            expertCount: (current.expertCount || 0) + 1,
+                            // UI-12 — live "N experts running" HUD counter.
+                            expertsRunning: (current.expertsRunning || 0) + 1,
                         });
                         break;
+                    // UI-12 — completed/failed split: both decrement the
+                    // live experts-running counter; failures additionally
+                    // bump the error counter shown in the HUD.
                     case "expert_completed":
+                        this.setThreadRunState(threadId, {
+                            state: "running",
+                            label: message || "Working...",
+                            phase: "gathering",
+                            run_id: runId,
+                            expertsRunning: Math.max(0, (current.expertsRunning || 0) - 1),
+                        });
+                        this.reloadThreadMessages(threadId);
+                        break;
                     case "expert_failed":
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Working...",
+                            phase: "gathering",
                             run_id: runId,
+                            expertsRunning: Math.max(0, (current.expertsRunning || 0) - 1),
+                            errorCount: (current.errorCount || 0) + 1,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
-                    case "run_done":
+                    case "run_done": {
                         this.setThreadRunState(threadId, {
                             state: "done",
                             label: message || "Done",
+                            phase: "done",
                             error: false,
                             run_id: runId,
+                            expertsRunning: 0,
+                        });
+                        // UI-09 H2 — compute the run-summary chip data.
+                        // Duration from startedAt to now (setThreadRunState
+                        // sets finishedAt). Experts/tool counts from the
+                        // run counters. Auto-dismissed after 30s by the HUD.
+                        const st = this.getThreadRunState(threadId) || {};
+                        const durationSec = st.startedAt
+                            ? Math.max(0, (st.finishedAt || Date.now()) - st.startedAt) / 1000
+                            : 0;
+                        this.setThreadRunState(threadId, {
+                            lastRunSummary: {
+                                durationSec: Math.round(durationSec * 10) / 10,
+                                expertCount: st.expertCount || 0,
+                                toolCount: st.toolCount || 0,
+                                shownAt: Date.now(),
+                            },
                         });
                         this.reloadThreadMessages(threadId);
                         break;
+                    }
                     case "run_failed":
                         this.setThreadRunState(threadId, {
                             state: "failed",
                             label: message || "Failed",
+                            phase: "failed",
                             error: true,
                             run_id: runId,
+                            expertsRunning: 0,
+                            // UI-12 — surface the failure in the HUD error counter.
+                            errorCount: (current.errorCount || 0) + 1,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -876,8 +953,10 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "cancelled",
                             label: message || "Cancelled",
+                            phase: "cancelled",
                             error: false,
                             run_id: runId,
+                            expertsRunning: 0,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -885,8 +964,10 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "killed",
                             label: message || "Killed",
+                            phase: "killed",
                             error: false,
                             run_id: runId,
+                            expertsRunning: 0,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -894,8 +975,10 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "timed_out",
                             label: message || "Timed out",
+                            phase: "timed_out",
                             error: false,
                             run_id: runId,
+                            expertsRunning: 0,
                         });
                         this.reloadThreadMessages(threadId);
                         break;
@@ -903,6 +986,7 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "paused",
                             label: message || "Awaiting approval",
+                            phase: "paused",
                             error: false,
                             run_id: runId,
                         });
@@ -911,6 +995,7 @@ export const llmStoreService = {
                         this.setThreadRunState(threadId, {
                             state: "running",
                             label: message || "Resuming...",
+                            phase: current.phase || "analyzing",
                             error: false,
                             run_id: runId,
                         });
@@ -945,6 +1030,25 @@ export const llmStoreService = {
             isThreadRunning(threadId) {
                 const st = this.threadRunState[threadId];
                 return Boolean(st && st.state === "running");
+            },
+
+            /**
+             * UI-09 H2 — get the run-summary chip data for a thread, with
+             * 30-second auto-dismiss. Returns null if:
+             *   - no run has completed (lastRunSummary is null)
+             *   - the summary was shown >30s ago (auto-dismissed)
+             *   - a new run has started (state is "running" again)
+             *
+             * The HUD calls this in a reactive getter (via ``useState``) so
+             * the chip appears when ``run_done`` fires and disappears after
+             * 30s. The auto-dismiss is time-based (not event-based) so it
+             * works even if the user doesn't interact with the thread.
+             */
+            getRunSummary(threadId) {
+                if (!threadId) {
+                    return null;
+                }
+                return getVisibleRunSummary(this.threadRunState[threadId]);
             },
 
             clearThreadRunState(threadId) {
@@ -1235,6 +1339,36 @@ export const llmStoreService = {
                 messageIds: messages.map((m) => m.id),
                 getMessage: (id) => mailStore.Message.get(id),
             });
+            // UI-09 H1 — detect the "synthesizing" phase. When an assistant
+            // (non-notification) message arrives while the run is still
+            // "running", the master is writing the final answer — set the
+            // phase to "synthesizing". This phase is brief: run_done
+            // arrives shortly after and overwrites it with "done".
+            // Also increment toolCount for each tool message (UI-09 H2).
+            const runSt = llmStore.getThreadRunState(threadId);
+            if (runSt && runSt.state === "running") {
+                let hasAssistant = false;
+                let toolDelta = 0;
+                for (const m of messages) {
+                    if (m.llm_role === "assistant" && m.message_type !== "notification") {
+                        hasAssistant = true;
+                    }
+                    if (m.llm_role === "tool") {
+                        toolDelta++;
+                    }
+                }
+                const update = {};
+                if (hasAssistant && runSt.phase !== "synthesizing") {
+                    update.phase = "synthesizing";
+                    update.label = "Synthesizing answer...";
+                }
+                if (toolDelta > 0) {
+                    update.toolCount = (runSt.toolCount || 0) + toolDelta;
+                }
+                if (Object.keys(update).length) {
+                    llmStore.setThreadRunState(threadId, update);
+                }
+            }
         });
 
         // Initialize LLM data after mailStore is ready (which calls init_messaging)

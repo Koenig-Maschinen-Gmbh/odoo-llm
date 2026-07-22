@@ -130,6 +130,20 @@ class LLMThread(models.Model):
     )
     active = fields.Boolean(default=True)
 
+    # UI-11 — expert sub-threads (created by koenig_ai_orchestrator's
+    # ``_create_and_drain_sub_thread``) are hidden from the sidebar by
+    # default. Set at creation time so the thread is filtered out
+    # immediately — even while the expert is still running and before the
+    # ``active = False`` archiving lands in the ``finally`` block. The flag
+    # lives here (not in the orchestrator) because the sidebar filter and
+    # the store payload read it from the base thread model.
+    is_expert_subthread = fields.Boolean(
+        string="Expert Sub-Thread",
+        default=False,
+        help="Thread created by an orchestration expert run. Hidden from the "
+        "sidebar by default; reveal via the 'Show expert threads' toggle.",
+    )
+
     # Updated fields for related record reference
     model = fields.Char(
         string="Related Document Model",
@@ -850,6 +864,9 @@ class LLMThread(models.Model):
             "write_date": thread.write_date,  # For sorting in thread list
             "channel_type": "llm_chat",  # Custom type for LLM threads
             "active": thread.active,  # P-UX: archive filter
+            # UI-11: sidebar expert-subthread filter. Sent unconditionally
+            # (same store-merge rationale as ``active`` above).
+            "is_expert_subthread": thread.is_expert_subthread,
             "tag_ids": [  # P-UX: sidebar badges + tag filtering
                 {
                     "id": tag.id,

@@ -100,10 +100,14 @@
             style="min-height: 0;"
             t-on-click="onThreadAreaClick"
           >
+                        <!-- t-key forces a remount on thread switch (OCB
+                             discuss.xml:96 pattern) so scroll state and the
+                             component's setup-captured thread never go stale. -->
                         <Thread
               thread="activeThread"
               order="'asc'"
               scrollRef="threadScrollableRef"
+              t-key="activeThread.localId"
             />
                     </div>
 
@@ -146,8 +150,16 @@
                     <div
             class="o-llm-composer-area border-top px-2 py-1 flex-shrink-0"
           >
+                        <!-- t-key forces a remount on thread switch (OCB
+                             discuss.xml:97 pattern). Without it the Composer
+                             component is reused via props updates and its
+                             attachmentUploader — created once in setup() —
+                             keeps pushing uploads into the STALE composer
+                             record of the thread active at mount time, so
+                             attachments silently never reach the message. -->
                         <Composer
               t-if="threadComposer"
+              t-key="activeThread.localId"
               composer="threadComposer"
               mode="'compact'"
               sidebar="false"

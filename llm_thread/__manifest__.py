@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.23.0",
+    "version": "18.0.1.25.1",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -89,6 +89,9 @@ Contact: support@apexive.com
             # P0: optimistic-message lifecycle helpers (escape / link / remove)
             # — used by llm_store_service.js
             "llm_thread/static/src/utils/llm_thread_messages.js",
+            # UI-09 H1/H2: phase mapping + run-summary formatting (pure helpers)
+            # — used by llm_store_service.js + llm_thread_hud.js
+            "llm_thread/static/src/utils/llm_phase.js",
             # Patches - Safe extensions of mail components with conditional LLM logic
             "llm_thread/static/src/patches/composer_patch.js",
             "llm_thread/static/src/patches/composer_patch.xml",
@@ -119,6 +122,10 @@ Contact: support@apexive.com
             # suite. The util is bundled here too (assets_unit_tests is isolated).
             "llm_thread/static/src/utils/llm_thread_messages.js",
             "llm_thread/static/tests/llm_thread_messages.test.js",
+            # UI-09 H1/H2 — phase mapping + run-summary formatting (pure helpers)
+            # + Hoot suite. The util is bundled here too (assets_unit_tests is isolated).
+            "llm_thread/static/src/utils/llm_phase.js",
+            "llm_thread/static/tests/llm_phase.test.js",
         ],
     },
     "images": [

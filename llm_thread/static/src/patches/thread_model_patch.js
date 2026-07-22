@@ -33,6 +33,8 @@ patch(Thread.prototype, {
         // Record.many) because the fork sends them as plain values / dict
         // arrays, not as store record references.
         this.active = Record.attr(true);
+        // UI-11: expert sub-threads are hidden from the sidebar by default.
+        this.is_expert_subthread = Record.attr(false);
         this.tag_ids = Record.attr([]);
         this.provider_id = Record.attr(false);
         this.model_id = Record.attr(false);

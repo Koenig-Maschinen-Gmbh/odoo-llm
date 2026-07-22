@@ -73,6 +73,9 @@ export class LLMSidebar extends Component {
         this.state = useState({
             searchVal: "",
             showArchived: false,
+            // UI-11: expert sub-threads are hidden by default; the toggle
+            // reveals them for debugging (mirrors the archive toggle).
+            showExpertThreads: false,
             collapsedBuckets: persistedBuckets,
             selectMode: false,
             selectedThreadIds: {}, // {id: true} — plain object for reactivity
@@ -149,6 +152,12 @@ export class LLMSidebar extends Component {
         // Archive filter: hide archived unless "Show archived" is on.
         if (!this.state.showArchived) {
             threads = threads.filter((t) => t.active !== false);
+        }
+        // UI-11: hide expert sub-threads unless "Show expert threads" is on.
+        // The flag is set at creation time, so sub-threads are hidden even
+        // while the expert is still running (before active=False archiving).
+        if (!this.state.showExpertThreads) {
+            threads = threads.filter((t) => !t.is_expert_subthread);
         }
         // Search: instant client-side name match OR a server content match.
         const term = cleanTerm(this.state.searchVal);
@@ -479,5 +488,33 @@ export class LLMSidebar extends Component {
             return _t("%sd ago", Math.floor(diffD));
         }
         return formatDateTime(dt);
+    }
+
+    /**
+     * UI-08 B1 — build a rich tooltip for a sidebar thread item.
+     *
+     * Replaces the old persistent per-item relative-date label (which was
+     * redundant noise — the date-bucket headers already carry the date
+     * context). The tooltip shows the thread name, created date, and last
+     * activity date as full datetimes — zero visual noise, full info on hover.
+     */
+    threadTooltip(thread) {
+        if (!thread) {
+            return "";
+        }
+        const parts = [thread.name || ""];
+        if (thread.create_date) {
+            const created = formatDateTime(deserializeDateTime(thread.create_date));
+            if (created) {
+                parts.push(_t("Created: %s", created));
+            }
+        }
+        if (thread.write_date) {
+            const lastActivity = formatDateTime(deserializeDateTime(thread.write_date));
+            if (lastActivity) {
+                parts.push(_t("Last activity: %s", lastActivity));
+            }
+        }
+        return parts.join("\n");
     }
 }

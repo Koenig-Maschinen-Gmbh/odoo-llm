@@ -22,8 +22,10 @@
                  are NOT steps: they render expanded outside the drawer. -->
             <t t-if="isLLMStep">
                 <!-- Drawer closed: only the first step renders the toggle. -->
+                <!-- UI-10: toggle hidden for regular users (steps are fully
+                     hidden via CSS); debug users see it when a turn is folded. -->
                 <div
-          t-if="!isStepDrawerOpen and isFirstStepOfTurn"
+          t-if="!isStepDrawerOpen and isFirstStepOfTurn and isDebugMode"
           class="o-llm-step-summary small text-muted mt-1"
         >
                     <button
@@ -41,8 +43,10 @@
                      every step renders its own content (tool result / tool
                      calls) below. -->
                 <t t-if="isStepDrawerOpen">
+                    <!-- UI-10: drawer header is a debug-only affordance
+                         (regular users never see step content). -->
                     <div
-            t-if="isFirstStepOfTurn"
+            t-if="isFirstStepOfTurn and isDebugMode"
             class="o-llm-step-header small text-muted mt-1 border-top pt-1"
           >
                         <button

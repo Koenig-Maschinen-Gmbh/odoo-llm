@@ -64,6 +64,15 @@
         }
     }
 
+    // --- UI-10 — debug-aware step rendering ------------------------------
+    // Regular users: step messages (tool calls / intermediate assistant
+    // narration) are removed from layout entirely — the progress status
+    // lines (``o-llm-message-status``) tell the story instead. Debug users
+    // (?debug=1) never get this class: they see every step expanded.
+    &.o-llm-step.o-llm-step-hidden-user {
+        display: none !important;
+    }
+
     .o-llm-step-summary,
     .o-llm-step-header {
         .o-llm-step-toggle {

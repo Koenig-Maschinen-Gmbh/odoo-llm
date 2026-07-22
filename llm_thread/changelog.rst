@@ -1,3 +1,107 @@
+18.0.1.25.1 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **Composer attachments lost on thread switch (stale
+  attachmentUploader).** The chat container rendered ``<Thread>`` and
+  ``<Composer>`` without ``t-key`` — unlike OCB ``discuss.xml:96-97`` which
+  keys both on ``thread.localId``. Without the key, switching threads reused
+  the Composer component via props updates, so its ``attachmentUploader``
+  (created once in ``setup()``) kept pushing uploaded files into the STALE
+  composer record of the thread active at mount time. Uploads succeeded
+  server-side (parked as pending on ``mail.compose.message``) but never
+  appeared in the composer and were silently dropped from the sent message —
+  breaking the image-upload path for the media_describe expert. Both
+  components now carry ``t-key="activeThread.localId"`` (OCB pattern), so a
+  thread switch remounts them with the correct composer. Found during the
+  2026-07-21 hardening run.
+
+18.0.1.25.0 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **UI-10: Steps drawer — debug-aware rendering.** The per-turn
+  "Work steps (N)" drawer is now debug-aware. Regular users: step messages
+  (tool calls, args, results, intermediate assistant narration) are removed
+  from the timeline entirely — the slim progress status lines (UI-06) tell
+  the story instead, and no drawer toggle renders. Debug users (``?debug=1``):
+  every step renders fully expanded (the pre-drawer behavior); the toggle
+  still folds a turn for focus. New ``isDebugMode`` getter on the message
+  component (OCB ``list_renderer.js`` pattern: ``Boolean(odoo.debug)``);
+  ``isStepDrawerOpen`` is now derived from debug mode (replaces the UI-06 S3
+  running-turn default). New ``o-llm-step-hidden-user`` CSS class removes
+  step messages from layout for regular users.
+
+* [IMP] **UI-11: Hide expert sub-threads from the sidebar by default.**
+  New ``is_expert_subthread`` field on ``llm.thread`` (set at creation time
+  by the orchestrator's ``_create_and_drain_sub_thread`` — so sub-threads
+  are hidden immediately, even while the expert is still running and before
+  the ``active = False`` archiving lands). Shipped to the mail store via
+  ``_thread_store_dict`` (unconditional, same store-merge rationale as
+  ``active``) and declared as ``Record.attr`` on the JS Thread model. The
+  sidebar filters them by default; a new "Show expert threads" toggle
+  (``fa-user-secret`` icon, next to "Show archived") reveals them for
+  debugging.
+
+* [IMP] **UI-12: HUD run-health indicators.** The HUD now shows three
+  subtle, real-time counters between the phase indicator and the run-summary
+  chip — for ALL users (not debug-only): "● N experts running" (pulsing
+  dot, live dispatched-minus-completed), "🔧 N tool calls" (cumulative for
+  the current run), "⚠ N errors" (expert/tool failures; persists after a
+  failed run until the next run resets it). Only non-zero values render
+  (same pattern as the existing tokens/cost spans). New store counters
+  ``expertsRunning`` / ``errorCount`` on ``threadRunState`` (reset on
+  ``run_started``; the terminal events zero the live counter). New pure
+  helper ``getRunHealth`` in ``llm_phase.js`` (Hoot-tested: 8 test cases).
+
+* [TEST] 8 new Hoot cases for ``getRunHealth`` (``llm_phase.test.js`` —
+  suite now 45 cases) + a Python store-payload test for
+  ``is_expert_subthread`` (``test_llm_thread_search.py``).
+
+18.0.1.24.0 (2026-07-21)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **UI-08: Sidebar declutter — hover dates.** The persistent per-item
+  relative-date label ("Just now", "3h ago", "2d ago") is removed from the
+  sidebar. Date context is already given by the bucket headers (Today /
+  Yesterday / This Week / Older). Thread timestamps now live in a rich
+  tooltip showing the thread name, creation date, and last activity date —
+  full info on hover, zero visual noise at rest. New ``threadTooltip``
+  method in ``llm_sidebar.js``.
+
+* [IMP] **UI-08: Sidebar declutter — persistent status icon.** Each sidebar
+  thread item now has a dedicated status indicator span (``o-llm-thread-status``)
+  with a CSS-only fade animation for the "done" check icon. The green check
+  stays fully visible for ~8s, then fades to 30% opacity over 2s — enough
+  time for the user to glance at the sidebar and see the run finished,
+  without the sidebar filling with permanent green checks.
+
+* [IMP] **UI-09 H1: HUD live phase indicator.** The HUD (stats bar under
+  the composer) now shows the current orchestration phase in real time:
+  "Idle" → "Analyzing…" → "Dispatching expert…" → "Gathering results…" →
+  "Synthesizing answer…" → "Done". Driven by bus events already handled
+  in ``llm_store_service.js`` — a new ``phase`` field on
+  ``threadRunState`` maps each orchestration event to a canonical phase.
+  The phase indicator shows a spinner for active phases, a green check for
+  "done", a red exclamation for "failed". Includes an elapsed mm:ss counter
+  for running phases. New pure helper ``llm_phase.js`` (Hoot-tested: 37
+  test cases for event-to-phase mapping, label lookup, run-summary
+  formatting, and 30s auto-dismiss logic).
+
+* [IMP] **UI-09 H2: HUD run-summary chip.** After a run completes, a compact
+  chip appears in the HUD: "✓ 3 tools · 2 experts · 4.2s". The chip is
+  clickable — it opens the steps drawer of the last turn. Auto-dismisses
+  after 30 seconds (time-based, not event-based — works even without user
+  interaction). A new run automatically hides the old chip. The store
+  tracks ``expertCount``, ``toolCount``, and computes ``durationSec`` from
+  ``startedAt``/``finishedAt``. New ``getRunSummary`` store method with
+  30s auto-dismiss + hide-on-new-run logic.
+
+* [TEST] New Hoot test suite ``llm_phase.test.js`` — 37 test cases covering
+  ``eventToPhase`` (12 cases), ``PHASE_LABELS`` (2 cases), ``getPhaseLabel``
+  (3 cases), ``formatRunSummary`` (10 cases including singular/plural forms
+  and exact combined output), ``getVisibleRunSummary`` (10 cases including
+  30s boundary, auto-dismiss, missing shownAt safety, and custom ``now``
+  parameter). All 172 Hoot tests pass (94 llm_thread + 78 others).
+
 18.0.1.23.0 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
