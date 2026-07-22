@@ -612,6 +612,20 @@ class LLMThread(models.Model):
         except Exception:  # noqa: BLE001 — telemetry must never raise
             _logger.debug("llm trace finalize failed", exc_info=True)
 
+    def _get_fallback_model(self, model):
+        """Return the next fallback model after ``model`` (RES-01), or an
+        empty ``llm.model`` recordset for no fallback.
+
+        Base fork: NO fallback (empty). Extensions (e.g. the koenig
+        orchestrator) override to consult their fallback-chain config.
+        ONE hop only — the caller tries ``[primary, fallback]`` and stops
+        (no chains, no loops). The fallback model's OWN effort profile
+        applies via the provider's D2 precedence (per-model
+        ``reasoning_effort`` field), so chain entries with different effort
+        support are safe.
+        """
+        return self.env["llm.model"]
+
     def _generate_assistant_response(
         self, final_answer=False, *, loop_control_check=None, max_stream_duration_s=None
     ):
@@ -623,9 +637,19 @@ class LLMThread(models.Model):
         ``openai_get_client``); this is a second layer that retries the entire
         ``chat()`` call when the SDK exhausts its own retries.
 
+        RES-01 (fallback chain): after the retry loop is exhausted on a
+        TRANSIENT error (incl. PERF-09 stream-cap kills), the turn is retried
+        ONCE with the next chain model from :meth:`_get_fallback_model`
+        (empty in the base fork = no fallback; koenig overrides consult the
+        master fallback chain). One hop per turn, no loops. Non-transient
+        errors (400/401/403) never hop — the same request would fail on the
+        fallback too. The fallback attempt's traces carry the fallback
+        provider/model automatically (per-attempt ``request_trace``).
+
         **Error propagation design:**
-        - Transient errors (after all retries exhausted) → propagate → the
-          orchestrator's ``_execute`` handler marks the run "failed".
+        - Transient errors (after all retries + the fallback hop exhausted) →
+          propagate → the orchestrator's ``_execute`` handler marks the run
+          "failed".
         - Non-transient errors (400, 401, 403) → propagate immediately →
           same "failed" path.
         - ``GenerationCancelled`` (``BaseException``) → never caught →
@@ -655,10 +679,6 @@ class LLMThread(models.Model):
         """
         self.env.flush_all()
         message_history = self.get_llm_messages()
-        use_streaming = getattr(self.model_id, "supports_streaming", True)
-        chat_kwargs = self._prepare_chat_kwargs(
-            message_history, use_streaming, final_answer=final_answer
-        )
 
         max_retries = int(
             self.env["ir.config_parameter"]
@@ -677,94 +697,130 @@ class LLMThread(models.Model):
             )
         )
 
-        model_su = self.sudo().model_id
-        for attempt in range(max_retries):
-            # TEL-01: per-attempt request trace (fingerprint). Built inside
-            # the retry loop so each attempt gets its own row.
-            request_trace = {
-                "ts": fields.Datetime.to_string(fields.Datetime.now()),
-                "provider": (
-                    model_su.provider_id.service if model_su.provider_id else None
-                ),
-                "provider_id": (
-                    model_su.provider_id.id if model_su.provider_id else None
-                ),
-                "model": model_su.name,
-                "model_id": model_su.id,
-                "streaming": bool(use_streaming),
-                "attempt": attempt + 1,
-                "request": {
-                    "messages": len(chat_kwargs.get("messages") or []),
-                    "tools": len(chat_kwargs.get("tools") or []),
-                    "reasoning_effort": (
-                        chat_kwargs.get("reasoning_effort")
-                        or getattr(model_su, "reasoning_effort", "")
-                        or ""
+        # RES-01: the model chain for this turn — primary + ONE fallback hop
+        # (empty hook in the base fork = chain of 1, unchanged behavior).
+        model_chain = [self.sudo().model_id]
+        fallback_model = self._get_fallback_model(model_chain[0])
+        if fallback_model:
+            model_chain.append(fallback_model)
+
+        last_exc = None
+        for chain_model in model_chain:
+            model_su = chain_model
+            if last_exc is not None:
+                _logger.warning(
+                    "Thread %s: falling back to model %s after %s exhausted "
+                    "retries (%s)",
+                    self.id,
+                    model_su.name,
+                    model_chain[0].name,
+                    last_exc,
+                )
+            use_streaming = getattr(model_su, "supports_streaming", True)
+            chat_kwargs = self._prepare_chat_kwargs(
+                message_history, use_streaming, final_answer=final_answer
+            )
+            for attempt in range(max_retries):
+                # TEL-01: per-attempt request trace (fingerprint). Built inside
+                # the retry loop so each attempt gets its own row.
+                request_trace = {
+                    "ts": fields.Datetime.to_string(fields.Datetime.now()),
+                    "provider": (
+                        model_su.provider_id.service if model_su.provider_id else None
                     ),
-                    "final_answer": bool(final_answer),
-                },
-            }
-            sink = {}
+                    "provider_id": (
+                        model_su.provider_id.id if model_su.provider_id else None
+                    ),
+                    "model": model_su.name,
+                    "model_id": model_su.id,
+                    "streaming": bool(use_streaming),
+                    "attempt": attempt + 1,
+                    "request": {
+                        "messages": len(chat_kwargs.get("messages") or []),
+                        "tools": len(chat_kwargs.get("tools") or []),
+                        "reasoning_effort": (
+                            chat_kwargs.get("reasoning_effort")
+                            or getattr(model_su, "reasoning_effort", "")
+                            or ""
+                        ),
+                        "final_answer": bool(final_answer),
+                    },
+                }
+                sink = {}
 
-            # Phase 1: call the LLM API (retryable on transient errors).
-            # TransientLLMError is only raised by chat() — BEFORE any stream
-            # chunks are processed.  Mid-stream connection drops are raw SDK
-            # exceptions that propagate immediately (no partial-state retry).
-            try:
-                raw_response = model_su.chat(**chat_kwargs)
-            except Exception as exc:
-                # TEL-01: trace the chat-phase failure before retry/raise.
-                self._finalize_llm_trace(request_trace, sink, "error", exc)
-                if self._is_transient_llm_error(exc) and attempt < max_retries - 1:
-                    wait = backoff_base * (2**attempt)
-                    _logger.warning(
-                        "LLM API transient error (attempt %d/%d): %s — retrying in %ss",
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                        wait,
-                    )
-                    time.sleep(wait)
-                    continue
-                raise
+                # Phase 1: call the LLM API (retryable on transient errors).
+                # TransientLLMError is only raised by chat() — BEFORE any stream
+                # chunks are processed.  Mid-stream connection drops are raw SDK
+                # exceptions that propagate immediately (no partial-state retry).
+                try:
+                    raw_response = model_su.chat(**chat_kwargs)
+                except Exception as exc:
+                    # TEL-01: trace the chat-phase failure before retry/raise.
+                    self._finalize_llm_trace(request_trace, sink, "error", exc)
+                    if self._is_transient_llm_error(exc):
+                        if attempt < max_retries - 1:
+                            wait = backoff_base * (2**attempt)
+                            _logger.warning(
+                                "LLM API transient error (attempt %d/%d): %s — retrying in %ss",
+                                attempt + 1,
+                                max_retries,
+                                exc,
+                                wait,
+                            )
+                            time.sleep(wait)
+                            continue
+                        # Transient exhausted on this model → RES-01 hop.
+                        last_exc = exc
+                        break
+                    # Non-transient → propagate immediately (never hops).
+                    raise
 
-            # Phase 2: process the response.
-            # An empty response (no content, no tool_calls) raises
-            # TransientLLMError from the handler BEFORE any assistant message
-            # is created, so there is no partial state — safe to retry the
-            # whole chat() call.  Other exceptions (mid-stream errors after a
-            # partial message was posted) propagate immediately.
-            try:
-                if use_streaming:
-                    assistant_message = yield from self._handle_streaming_response(
-                        raw_response,
-                        loop_control_check=loop_control_check,
-                        trace_sink=sink,
-                        max_stream_duration_s=max_stream_duration_s,
-                    )
-                else:
-                    assistant_message = yield from self._handle_non_streaming_response(
-                        raw_response,
-                        trace_sink=sink,
-                    )
-            except TransientLLMError as exc:
-                # TEL-01: trace the handler-phase failure before retry/raise.
-                self._finalize_llm_trace(request_trace, sink, "error", exc)
-                if attempt < max_retries - 1:
-                    wait = backoff_base * (2**attempt)
-                    _logger.warning(
-                        "LLM empty response (attempt %d/%d): %s — retrying in %ss",
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                        wait,
-                    )
-                    time.sleep(wait)
-                    continue
-                raise
-            # TEL-01: trace the successful attempt.
-            self._finalize_llm_trace(request_trace, sink, "ok", None)
-            return assistant_message
+                # Phase 2: process the response.
+                # An empty response (no content, no tool_calls) raises
+                # TransientLLMError from the handler BEFORE any assistant message
+                # is created, so there is no partial state — safe to retry the
+                # whole chat() call.  Other exceptions (mid-stream errors after a
+                # partial message was posted) propagate immediately.
+                try:
+                    if use_streaming:
+                        assistant_message = yield from self._handle_streaming_response(
+                            raw_response,
+                            loop_control_check=loop_control_check,
+                            trace_sink=sink,
+                            max_stream_duration_s=max_stream_duration_s,
+                        )
+                    else:
+                        assistant_message = yield from self._handle_non_streaming_response(
+                            raw_response,
+                            trace_sink=sink,
+                        )
+                except TransientLLMError as exc:
+                    # TEL-01: trace the handler-phase failure before retry/raise.
+                    self._finalize_llm_trace(request_trace, sink, "error", exc)
+                    if attempt < max_retries - 1:
+                        wait = backoff_base * (2**attempt)
+                        _logger.warning(
+                            "LLM empty response (attempt %d/%d): %s — retrying in %ss",
+                            attempt + 1,
+                            max_retries,
+                            exc,
+                            wait,
+                        )
+                        time.sleep(wait)
+                        continue
+                    # Transient exhausted on this model → RES-01 hop.
+                    last_exc = exc
+                    break
+                # TEL-01: trace the successful attempt.
+                self._finalize_llm_trace(request_trace, sink, "ok", None)
+                return assistant_message
+            # Attempt loop broke without returning → transient exhaustion on
+            # this chain model → hop to the next one (if any).
+            continue
+        # Chain exhausted — propagate the last transient error (same
+        # semantics as the pre-RES-01 retry-exhausted raise).
+        if last_exc is not None:
+            raise last_exc
 
     def _is_transient_llm_error(self, exc):
         """Classify an LLM API exception as transient (retryable) or not.

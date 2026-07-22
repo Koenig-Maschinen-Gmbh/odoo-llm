@@ -1,3 +1,15 @@
+18.0.1.7.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] EFF-03a effort-rejection hardening: when the provider
+  answers HTTP 400 complaining about the reasoning/effort parameter
+  (e.g. gpt-oss-120b on Scaleway rejects ``reasoning_effort="none"``),
+  ``openai_chat`` and ``openai_simple_completion`` retry the call
+  EXACTLY ONCE with the effort params stripped (native
+  ``reasoning_effort`` and OpenRouter's ``extra_body.reasoning`` alike),
+  logging a warning. A second rejection propagates — no param-strip
+  loop.
+
 18.0.1.6.3 (2026-07-22)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

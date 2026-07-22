@@ -264,13 +264,58 @@ class LLMProvider(models.Model):
                 # OpenAI-specific: tool_choice param (Ollama doesn't support this)
                 params["tool_choice"] = kwargs.get("tool_choice", "auto")
 
-        # Make the API call
-        response = self.client.chat.completions.create(**params)
+        # Make the API call (EFF-03a: exactly-once retry WITHOUT the effort
+        # param when the provider 400-rejects it — e.g. gpt-oss-120b on
+        # Scaleway 400s on reasoning_effort="none").
+        try:
+            response = self.client.chat.completions.create(**params)
+        except Exception as exc:
+            if not self._is_effort_rejection(exc, params):
+                raise
+            stripped = self._strip_effort_params(params)
+            _logger.warning(
+                "llm_openai: provider rejected the reasoning-effort param "
+                "(%s: %.200s) — retrying once without it (model=%s)",
+                type(exc).__name__,
+                exc,
+                params.get("model"),
+            )
+            response = self.client.chat.completions.create(**stripped)
 
         # Process the response based on streaming mode
         if not stream:
             return self._openai_process_non_streaming_response(response)
         return self._openai_process_streaming_response(response)
+
+    def _is_effort_rejection(self, exc, params):
+        """Whether ``exc`` is a 400 complaining about reasoning/effort AND an
+        effort param was actually sent (EFF-03a).
+
+        Exactly-once: the caller retries with the params stripped; a second
+        rejection propagates (no param-strip loop).
+        """
+        status = getattr(exc, "status_code", None)
+        if status != 400:
+            return False
+        has_effort = "reasoning_effort" in params or "reasoning" in (
+            params.get("extra_body") or {}
+        )
+        if not has_effort:
+            return False
+        msg = str(exc).lower()
+        return "reasoning" in msg or "effort" in msg
+
+    def _strip_effort_params(self, params):
+        """Return a copy of ``params`` without any reasoning-effort keys."""
+        stripped = dict(params)
+        stripped.pop("reasoning_effort", None)
+        extra = dict(stripped.get("extra_body") or {})
+        extra.pop("reasoning", None)
+        if extra:
+            stripped["extra_body"] = extra
+        else:
+            stripped.pop("extra_body", None)
+        return stripped
 
     def openai_simple_completion(self, prompt, system_prompt=None, model=None, reasoning_effort=None, max_tokens=None):
         """Simple text completion using raw OpenAI client (no mail.message).
@@ -312,7 +357,22 @@ class LLMProvider(models.Model):
             self._apply_reasoning_effort(params, model, effort)
         if max_tokens:
             params["max_tokens"] = max_tokens
-        response = self.client.chat.completions.create(**params)
+        # EFF-03a: same exactly-once retry-without-param as openai_chat.
+        try:
+            response = self.client.chat.completions.create(**params)
+        except Exception as exc:
+            if not self._is_effort_rejection(exc, params):
+                raise
+            _logger.warning(
+                "llm_openai: provider rejected the reasoning-effort param "
+                "(%s: %.200s) — retrying once without it (model=%s, simple_completion)",
+                type(exc).__name__,
+                exc,
+                params.get("model"),
+            )
+            response = self.client.chat.completions.create(
+                **self._strip_effort_params(params)
+            )
         result = self._openai_process_non_streaming_response(response)
         return result.get("content", "")
 

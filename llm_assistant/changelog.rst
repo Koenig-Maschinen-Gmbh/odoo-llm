@@ -1,3 +1,17 @@
+18.0.1.15.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] RES-01 runtime fallback chain: after the transient-error
+  retry loop is exhausted (incl. PERF-09 stream-cap kills), the turn is
+  retried ONCE with the next chain model from the new overridable
+  ``_get_fallback_model`` hook (empty in the base fork = chain of 1,
+  unchanged behavior; koenig overrides consult the master fallback chain
+  ICP slots). One hop per turn, no loops; non-transient errors
+  (400/401/403) never hop. The fallback attempt's traces carry the
+  fallback provider/model automatically, and the fallback model's own
+  effort profile applies via the provider's per-model
+  ``reasoning_effort`` precedence.
+
 18.0.1.14.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
