@@ -1,3 +1,34 @@
+18.0.1.20.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **Provider error classifier — single source of truth
+  (PROV / hardening).** ``llm.thread._classify_llm_error(exc)`` normalizes any
+  provider/LLM exception into a stable taxonomy (``rate_limit`` / ``server`` /
+  ``gateway`` / ``bad_request`` / ``auth`` / ``forbidden`` / ``not_found`` /
+  ``not_implemented`` / ``timeout`` / ``connection`` / ``empty_response`` /
+  ``unknown``), modeled on the SAP ``classify_sap_error`` idiom. Named
+  ``LLM_ERR_*`` constants + a ``_LLM_TRANSIENT_CATEGORIES`` set.
+* [CHANGE] ``_is_transient_llm_error`` now DELEGATES to the classifier so the
+  retry decision, telemetry ``error_category``, and the user message never
+  drift. **Gateway-shaped 400s (Scaleway ``category: GATEWAY, upstreamStatus:
+  400``) are now FATAL** (were already fatal as plain 400s, but now explicitly
+  categorized) — retrying inflates the context window and the model fabricates.
+  A gateway 5xx stays transient. **HTTP 501 is now FATAL** (was transient under
+  the old blanket ``status >= 500`` rule) — Not Implemented won't succeed on
+  retry. All other retry behavior is byte-for-byte unchanged (verified by the
+  full ``test_llm_retry`` classification + retry-loop suite).
+* [ADD] ``_llm_error_status(exc)`` — status extraction (``status_code`` attr,
+  text fallback) and ``_describe_llm_error(exc)`` — clean, translatable
+  user-facing message per category; UNKNOWN falls back to ``str(exc)`` so real
+  code bugs are not hidden.
+* [ADD] ``_finalize_llm_trace`` records ``error_category`` on every failed
+  attempt (consumed by ``koenig.ai.llm.trace.error_category`` for per-category
+  provider reliability reporting).
+* [TEST] ``test_llm_retry.py`` +2 classes (``TestClassifyLLMError``,
+  ``TestDescribeLLMError``): gateway-400 fatal, gateway-502 transient, 501
+  fatal, category mapping, clean-message + str(exc)-fallback. Full retry suite
+  stays green.
+
 18.0.1.19.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -24,6 +24,7 @@ SOFTWARE.
 """
 
 import logging
+import re
 import time
 from collections import namedtuple
 
@@ -124,6 +125,59 @@ class TransientLLMError(Exception):
     Non-transient errors (400, 401, 403, Odoo ``UserError``, etc.) are NOT
     this class — they propagate as-is and mark the run "failed".
     """
+
+
+# ---------------------------------------------------------------------------
+# Provider error taxonomy — single source of truth for the retry decision
+# (:meth:`LLMThread._is_transient_llm_error`), telemetry
+# (``koenig.ai.llm.trace.error_category``), and the user-facing error message
+# (:meth:`LLMThread._describe_llm_error`). Modeled on the SAP
+# ``classify_sap_error`` idiom (koenig_sap_business_partner) — named constants
+# + one classifier + an explicit transient set.
+#
+# The category is STATUS-DRIVEN (the HTTP status code determines retry-ability),
+# so a gateway-shaped 400 (Scaleway ``category: GATEWAY, upstreamStatus: 400``)
+# stays FATAL like any other 400 — retrying it inflates the context window and
+# the model then fabricates (the 2026-07-23 hardening finding). A gateway 5xx is
+# transient. ``gateway`` is a descriptive category whose transient-ness is
+# resolved from the status by ``_is_transient_llm_error`` (documented special
+# case below).
+# ---------------------------------------------------------------------------
+LLM_ERR_RATE_LIMIT = "rate_limit"  # HTTP 429 — transient
+LLM_ERR_SERVER = "server"  # HTTP 5xx (not 501) — transient
+LLM_ERR_TIMEOUT = "timeout"  # request timeout — transient
+LLM_ERR_CONNECTION = "connection"  # connection reset/refused — transient
+LLM_ERR_EMPTY = (
+    "empty_response"  # TransientLLMError (empty/reasoning-only/PERF-09) — transient
+)
+LLM_ERR_GATEWAY = "gateway"  # gateway/upstream error — transient iff status is 429/5xx
+LLM_ERR_BAD_REQUEST = "bad_request"  # HTTP 400 — fatal
+LLM_ERR_AUTH = "auth"  # HTTP 401 — fatal
+LLM_ERR_FORBIDDEN = "forbidden"  # HTTP 403 — fatal
+LLM_ERR_NOT_FOUND = "not_found"  # HTTP 404 — fatal
+LLM_ERR_NOT_IMPLEMENTED = "not_implemented"  # HTTP 501 — fatal
+LLM_ERR_UNKNOWN = "unknown"  # unclassified — fatal (never retry blindly)
+
+# Categories that the retry loop treats as transient (retryable). ``gateway``
+# is NOT here — its transient-ness depends on the status code (see
+# ``_is_transient_llm_error``).
+_LLM_TRANSIENT_CATEGORIES = frozenset(
+    {
+        LLM_ERR_RATE_LIMIT,
+        LLM_ERR_SERVER,
+        LLM_ERR_TIMEOUT,
+        LLM_ERR_CONNECTION,
+        LLM_ERR_EMPTY,
+    }
+)
+
+# Extract a 3-digit HTTP status from a provider error's text when the exception
+# does not expose a ``status_code`` attribute (belt-and-suspenders for wrapped
+# errors; the OpenAI SDK sets ``status_code`` directly for the real cases).
+_LLM_STATUS_TEXT_RE = re.compile(
+    r"(?:error code|httpstatus|status[_ ]?code|upstreamstatus)['\"\s:]*?(\d{3})",
+    re.IGNORECASE,
+)
 
 
 _FOLD_PROMPT_TEMPLATE = """\
@@ -843,10 +897,12 @@ class LLMThread(models.Model):
         debug log, so this method never raises into the observed path.
 
         Sets ``error_class`` / ``error_message`` (capped 500) from ``exc``
-        when present. ``duration_ms`` is taken from the sink (set by the
-        handler's ``_fill_end``); when the handler never ran (chat raised
-        before any chunk), it stays 0 — the trace still records the
-        attempt + error class, which is the forensic value.
+        when present, plus ``error_category`` (the normalized provider-error
+        taxonomy from :meth:`_classify_llm_error`, for PROV telemetry).
+        ``duration_ms`` is taken from the sink (set by the handler's
+        ``_fill_end``); when the handler never ran (chat raised before any
+        chunk), it stays 0 — the trace still records the attempt + error
+        class, which is the forensic value.
         """
         try:
             trace = dict(request_trace)
@@ -854,6 +910,10 @@ class LLMThread(models.Model):
             trace["status"] = status
             if exc is not None:
                 trace["error_class"] = type(exc).__name__
+                try:
+                    trace["error_category"] = self._classify_llm_error(exc)
+                except Exception:  # noqa: BLE001 — classification must never break capture
+                    trace["error_category"] = LLM_ERR_UNKNOWN
                 try:
                     msg = str(exc)
                 except Exception:  # noqa: BLE001 — never crash on a bad __str__
@@ -1092,38 +1152,160 @@ class LLMThread(models.Model):
             raise last_exc
 
     def _is_transient_llm_error(self, exc):
-        """Classify an LLM API exception as transient (retryable) or not.
+        """Return True when ``exc`` should be retried (transient), else False.
 
-        The OpenAI SDK retries at the HTTP level (``max_retries=3`` in
-        ``openai_get_client``).  If the SDK raises after exhausting its own
-        retries, this method classifies the error so the caller's retry loop
-        can retry the entire ``chat()`` call.
+        Delegates to :meth:`_classify_llm_error` (the single source of truth for
+        the provider-error taxonomy) so the retry decision, the telemetry
+        ``error_category``, and the user-facing message never drift apart.
 
-        Classification is generic (no SDK-specific imports) — it checks the
-        exception class name and the ``status_code`` attribute.  Works with
-        the OpenAI SDK and any OpenAI-compatible provider.
+        Transient (retry): rate_limit (429), server (5xx≠501), timeout,
+        connection, empty_response (``TransientLLMError``), and gateway errors
+        whose effective HTTP status is 429/5xx.
 
-        Transient (retry):
-            - ``TransientLLMError`` (explicitly classified)
-            - Connection / timeout errors (class name heuristic)
-            - HTTP 5xx (``status_code >= 500``)
-            - HTTP 429 rate limit (``status_code == 429``)
+        Non-transient (propagate → run marked "failed"): bad_request (400),
+        auth (401), forbidden (403), not_found (404), not_implemented (501),
+        gateway errors with a 4xx status, and unknown. ``GenerationCancelled``
+        / ``GenerationPaused`` are ``BaseException`` and never reach here.
 
-        Non-transient (propagate):
-            - HTTP 400 (bad request), 401 (auth), 403 (forbidden), 404
-            - Odoo ``UserError`` / ``ValidationError`` (data issues)
-            - Any other ``Exception`` not matching the transient criteria
-            - ``GenerationCancelled`` (``BaseException`` — never reaches here)
+        The OpenAI SDK already retries at the HTTP level (``max_retries=3`` in
+        ``openai_get_client``); this classifies the error the SDK surfaces AFTER
+        it exhausts its own retries, so the caller's loop can retry the whole
+        ``chat()`` call.
+        """
+        cat = self._classify_llm_error(exc)
+        if cat in _LLM_TRANSIENT_CATEGORIES:
+            return True
+        if cat == LLM_ERR_GATEWAY:
+            # A gateway error is transient only when its status is a server-side
+            # hiccup (429/5xx≠501). A gateway-wrapped 400 (upstream rejected the
+            # request as malformed) is FATAL — retrying inflates the context and
+            # the model fabricates.
+            status = self._llm_error_status(exc)
+            return status is not None and (
+                status == 429 or (500 <= status < 600 and status != 501)
+            )
+        return False
+
+    @staticmethod
+    def _llm_error_status(exc):
+        """Extract the HTTP status code from a provider error, or ``None``.
+
+        Prefers the exception's ``status_code`` attribute (set by the OpenAI SDK
+        for ``APIStatusError`` subclasses); falls back to parsing a 3-digit code
+        out of the message text (``Error code: 400``, ``httpStatus: 400``,
+        ``upstreamStatus: 400``) for wrapped errors. Never raises.
+        """
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int):
+            return status
+        try:
+            text = str(exc)
+        except Exception:  # noqa: BLE001 — never crash on a bad __str__
+            return None
+        match = _LLM_STATUS_TEXT_RE.search(text)
+        return int(match.group(1)) if match else None
+
+    def _classify_llm_error(self, exc):
+        """Classify a provider/LLM exception into an ``LLM_ERR_*`` category.
+
+        Single source of truth for the provider-error taxonomy — consumed by
+        :meth:`_is_transient_llm_error` (retry decision), ``_finalize_llm_trace``
+        (``koenig.ai.llm.trace.error_category`` telemetry), and
+        :meth:`_describe_llm_error` (user-facing message). Modeled on the SAP
+        ``classify_sap_error`` idiom.
+
+        Classification is generic (no SDK-specific imports) — it inspects the
+        exception class name, ``status_code``, and the message text, so it works
+        with the OpenAI SDK and any OpenAI-compatible provider. Never raises.
         """
         if isinstance(exc, TransientLLMError):
-            return True
+            return LLM_ERR_EMPTY
         exc_name = type(exc).__name__
-        if "Timeout" in exc_name or "Connection" in exc_name:
-            return True
-        status = getattr(exc, "status_code", None)
-        if status is not None and (status >= 500 or status == 429):
-            return True
-        return False
+        if "Timeout" in exc_name:
+            return LLM_ERR_TIMEOUT
+        if "Connection" in exc_name:
+            return LLM_ERR_CONNECTION
+        try:
+            text = str(exc).lower()
+        except Exception:  # noqa: BLE001 — never crash on a bad __str__
+            text = ""
+        # Gateway / upstream-service errors: the provider's edge failed to reach
+        # or got an error from the model backend. Detected by text so the
+        # transient-ness can be resolved from the status (a gateway 400 is fatal,
+        # a gateway 5xx is transient) — see _is_transient_llm_error. "Bad
+        # Gateway" (502) is correctly caught here and stays transient via status.
+        if (
+            "gateway" in text
+            or "upstream-service-error" in text
+            or "upstreamstatus" in text
+        ):
+            return LLM_ERR_GATEWAY
+        status = self._llm_error_status(exc)
+        if status == 429:
+            return LLM_ERR_RATE_LIMIT
+        if status == 501:
+            return LLM_ERR_NOT_IMPLEMENTED
+        if status is not None and 500 <= status < 600:
+            return LLM_ERR_SERVER
+        if status == 400:
+            return LLM_ERR_BAD_REQUEST
+        if status == 401:
+            return LLM_ERR_AUTH
+        if status == 403:
+            return LLM_ERR_FORBIDDEN
+        if status == 404:
+            return LLM_ERR_NOT_FOUND
+        # Text heuristics for providers that don't expose status_code cleanly.
+        if "rate limit" in text or "too many requests" in text:
+            return LLM_ERR_RATE_LIMIT
+        return LLM_ERR_UNKNOWN
+
+    def _describe_llm_error(self, exc):
+        """Return a clean, translatable user-facing message for a provider error.
+
+        Provider errors get a concise summary keyed off :meth:`_classify_llm_error`
+        (the raw provider payload stays in the forensic ``error`` field + the
+        trace row for admin diagnosis). An UNKNOWN category (e.g. a genuine code
+        bug, not a provider error) falls back to ``str(exc)`` so real bugs are
+        NOT hidden from the user. Never raises.
+        """
+        cat = self._classify_llm_error(exc)
+        messages = {
+            LLM_ERR_RATE_LIMIT: _(
+                "The AI provider is rate-limiting requests right now. Please try again in a moment."
+            ),
+            LLM_ERR_SERVER: _(
+                "The AI provider had a temporary server error. Please try again."
+            ),
+            LLM_ERR_TIMEOUT: _("The AI provider timed out. Please try again."),
+            LLM_ERR_CONNECTION: _(
+                "Could not reach the AI provider (connection error). Please try again."
+            ),
+            LLM_ERR_GATEWAY: _(
+                "The AI provider's gateway returned an error (upstream service problem). "
+                "Please try again in a moment."
+            ),
+            LLM_ERR_BAD_REQUEST: _(
+                "The AI provider rejected the request. This usually indicates a "
+                "configuration issue rather than a temporary problem — please contact an administrator."
+            ),
+            LLM_ERR_AUTH: _(
+                "The AI provider rejected the credentials. Please check the provider API key."
+            ),
+            LLM_ERR_FORBIDDEN: _(
+                "The AI provider denied access to this model. Please check the provider configuration."
+            ),
+            LLM_ERR_NOT_FOUND: _(
+                "The AI provider could not find the requested model or endpoint."
+            ),
+            LLM_ERR_NOT_IMPLEMENTED: _(
+                "The AI provider does not support this request."
+            ),
+        }
+        try:
+            return messages.get(cat) or str(exc)
+        except Exception:  # noqa: BLE001 — never crash on a bad __str__
+            return _("The AI request failed.")
 
     def _prepare_chat_kwargs(self, message_history, use_streaming, final_answer=False):
         """Prepare chat kwargs for provider. Can be overridden by extensions.

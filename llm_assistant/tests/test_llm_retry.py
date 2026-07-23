@@ -24,6 +24,18 @@ from unittest.mock import MagicMock, patch
 from odoo.tests import TransactionCase, tagged
 
 from odoo.addons.llm_assistant.models.llm_thread import (
+    LLM_ERR_AUTH,
+    LLM_ERR_BAD_REQUEST,
+    LLM_ERR_CONNECTION,
+    LLM_ERR_EMPTY,
+    LLM_ERR_FORBIDDEN,
+    LLM_ERR_GATEWAY,
+    LLM_ERR_NOT_FOUND,
+    LLM_ERR_NOT_IMPLEMENTED,
+    LLM_ERR_RATE_LIMIT,
+    LLM_ERR_SERVER,
+    LLM_ERR_TIMEOUT,
+    LLM_ERR_UNKNOWN,
     GenerationCancelled,
     TransientLLMError,
 )
@@ -754,3 +766,222 @@ class TestEmptyResponseRetry(TransactionCase):
             any(e.get("type") == "error" for e in events),
             "Expected an error event",
         )
+
+
+# ---------------------------------------------------------------------------
+# _classify_llm_error — normalized provider-error taxonomy (single source of
+# truth for the retry decision + telemetry + user message)
+# ---------------------------------------------------------------------------
+
+
+@tagged("post_install", "-at_install")
+class TestClassifyLLMError(TransactionCase):
+    """Verify ``_classify_llm_error`` returns the correct category and that the
+    retry decision (``_is_transient_llm_error``) stays consistent with it —
+    especially the gateway split (gateway-400 fatal, gateway-5xx transient)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.provider = (
+            cls.env["llm.provider"]
+            .sudo()
+            .create(
+                {
+                    "name": "Classify Test Provider",
+                    "service": "openai",
+                    "api_base": "https://test.example.com/v1",
+                    "api_key": "sk-test-key",
+                }
+            )
+        )
+        cls.model = (
+            cls.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "classify-test-model",
+                    "provider_id": cls.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        cls.thread = (
+            cls.env["llm.thread"]
+            .sudo()
+            .create(
+                {
+                    "name": "Classify test thread",
+                    "provider_id": cls.provider.id,
+                    "model_id": cls.model.id,
+                }
+            )
+        )
+
+    def _classify(self, exc):
+        return self.thread._classify_llm_error(exc)
+
+    def test_transient_llm_error_is_empty_category(self):
+        self.assertEqual(self._classify(TransientLLMError("empty")), LLM_ERR_EMPTY)
+
+    def test_timeout_category(self):
+        self.assertEqual(self._classify(FakeAPITimeoutError()), LLM_ERR_TIMEOUT)
+
+    def test_connection_category(self):
+        self.assertEqual(self._classify(FakeAPIConnectionError()), LLM_ERR_CONNECTION)
+
+    def test_rate_limit_category(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Rate limited", 429)), LLM_ERR_RATE_LIMIT
+        )
+
+    def test_server_category_500(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Internal Server Error", 500)),
+            LLM_ERR_SERVER,
+        )
+
+    def test_bad_request_category_400(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Bad Request", 400)), LLM_ERR_BAD_REQUEST
+        )
+
+    def test_auth_category_401(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Unauthorized", 401)), LLM_ERR_AUTH
+        )
+
+    def test_forbidden_category_403(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Forbidden", 403)), LLM_ERR_FORBIDDEN
+        )
+
+    def test_not_found_category_404(self):
+        self.assertEqual(
+            self._classify(FakeAPIStatusError("Not Found", 404)), LLM_ERR_NOT_FOUND
+        )
+
+    def test_not_implemented_category_501_is_fatal(self):
+        """501 (Not Implemented) is a distinct FATAL category — retrying won't
+        help. This is a deliberate refinement over the old ``status >= 500``
+        blanket-transient rule."""
+        exc = FakeAPIStatusError("Not Implemented", 501)
+        self.assertEqual(self._classify(exc), LLM_ERR_NOT_IMPLEMENTED)
+        self.assertFalse(
+            self.thread._is_transient_llm_error(exc), "501 must NOT be retried"
+        )
+
+    def test_unknown_category(self):
+        class SomeRandomError(Exception):
+            pass
+
+        self.assertEqual(self._classify(SomeRandomError("weird")), LLM_ERR_UNKNOWN)
+
+    def test_gateway_400_is_fatal(self):
+        """A gateway-shaped 400 (Scaleway ``category: GATEWAY, upstreamStatus:
+        400``) is classified ``gateway`` but is FATAL — retrying it inflates the
+        context window and the model fabricates (the 2026-07-23 finding)."""
+        exc = FakeAPIStatusError(
+            "Error code: 400 - {'error': {'httpStatus': 400, 'category': 'GATEWAY', "
+            "'code': 'upstream-service-error', 'upstreamStatus': 400}}",
+            400,
+        )
+        self.assertEqual(self._classify(exc), LLM_ERR_GATEWAY)
+        self.assertFalse(
+            self.thread._is_transient_llm_error(exc),
+            "gateway-400 must be FATAL (no retry)",
+        )
+
+    def test_gateway_502_is_transient(self):
+        """A gateway 5xx (Bad Gateway) is transient — the upstream had a
+        momentary hiccup, a retry may hit a healthy backend."""
+        exc = FakeAPIStatusError("Bad Gateway", 502)
+        self.assertEqual(self._classify(exc), LLM_ERR_GATEWAY)
+        self.assertTrue(
+            self.thread._is_transient_llm_error(exc),
+            "gateway-502 must be transient (retry)",
+        )
+
+    def test_rate_limit_text_heuristic_without_status(self):
+        """A provider that raises a rate-limit error without a status_code is
+        still classified via the message text."""
+
+        class NoStatusError(Exception):
+            pass
+
+        self.assertEqual(
+            self._classify(NoStatusError("429 Too Many Requests")), LLM_ERR_RATE_LIMIT
+        )
+
+
+@tagged("post_install", "-at_install")
+class TestDescribeLLMError(TransactionCase):
+    """Verify ``_describe_llm_error`` returns a clean provider message for known
+    categories and falls back to ``str(exc)`` for unknown errors (so genuine
+    code bugs are not hidden from the admin user)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.provider = (
+            cls.env["llm.provider"]
+            .sudo()
+            .create(
+                {
+                    "name": "Describe Test Provider",
+                    "service": "openai",
+                    "api_base": "https://test.example.com/v1",
+                    "api_key": "sk-test-key",
+                }
+            )
+        )
+        cls.model = (
+            cls.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "describe-test-model",
+                    "provider_id": cls.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        cls.thread = (
+            cls.env["llm.thread"]
+            .sudo()
+            .create(
+                {
+                    "name": "Describe test thread",
+                    "provider_id": cls.provider.id,
+                    "model_id": cls.model.id,
+                }
+            )
+        )
+
+    def test_gateway_message_is_clean(self):
+        """A gateway-400 surfaces a clean summary — NOT the raw provider JSON."""
+        raw = (
+            "Error code: 400 - {'error': {'httpStatus': 400, 'category': 'GATEWAY', "
+            "'code': 'upstream-service-error', 'upstreamStatus': 400}}"
+        )
+        msg = self.thread._describe_llm_error(FakeAPIStatusError(raw, 400))
+        self.assertIn("gateway", msg.lower())
+        self.assertNotIn(
+            "httpStatus", msg, "raw provider JSON must not leak into the user message"
+        )
+        self.assertNotIn(
+            "{", msg, "raw provider payload must not leak into the user message"
+        )
+
+    def test_rate_limit_message_is_clean(self):
+        msg = self.thread._describe_llm_error(FakeAPIStatusError("Rate limited", 429))
+        self.assertIn("rate", msg.lower())
+
+    def test_unknown_falls_back_to_str_exc(self):
+        """A non-provider error (code bug) shows its real message — not hidden."""
+
+        class SomeRandomError(Exception):
+            pass
+
+        msg = self.thread._describe_llm_error(SomeRandomError("boom: table missing"))
+        self.assertIn("boom: table missing", msg)
