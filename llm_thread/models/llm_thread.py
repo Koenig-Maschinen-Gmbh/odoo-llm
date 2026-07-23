@@ -725,6 +725,32 @@ class LLMThread(models.Model):
             _("Please install the llm_assistant module for actual AI generation."),
         )
 
+    def _effective_tools(self):
+        """Resolve the tools available to the LLM for THIS turn (single seam).
+
+        This is the ONE method the execution path reads to decide which tools
+        the model may call — the chat request (``_prepare_chat_kwargs``) and the
+        tool-call validation/execution in ``llm_tool.mail_message``. Reading a
+        method (not the raw ``tool_ids`` column) lets ``llm_assistant`` resolve
+        the set LIVE from the bound assistant, so a tool added to an assistant
+        reaches every one of its threads immediately — there is no per-thread
+        snapshot left to rot.
+
+        Base fork (no assistant concept): return the raw per-thread ``tool_ids``
+        column unchanged, so behaviour is byte-for-byte the pre-existing one
+        when ``llm_assistant`` is not installed. ``llm_assistant`` overrides
+        this to derive from ``assistant.tool_ids`` plus the tiny per-thread
+        deviation (``tool_ids_extra`` / ``tool_ids_disabled``).
+
+        Odoo-aligned: capability is resolved at the point of use, never copied
+        per record — the same idiom as ``ir.model.access`` / ``ir.rule`` /
+        group membership, which are evaluated live on every request.
+
+        Returns an ``llm.tool`` recordset.
+        """
+        self.ensure_one()
+        return self.tool_ids
+
     def get_context(self, base_context=None):
         context = {
             **(base_context or {}),

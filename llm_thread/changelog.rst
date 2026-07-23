@@ -1,3 +1,15 @@
+18.0.1.26.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **CAP-01 live tool resolution — ``llm.thread._effective_tools()``
+  seam.** New method on the base thread returning ``self.tool_ids`` (unchanged
+  behaviour when ``llm_assistant`` is absent). It is the single seam the whole
+  execution path reads to decide which tools the model may call, so the tool
+  set can be resolved LIVE (assistant-derived in ``llm_assistant``) instead of
+  from a per-thread snapshot that rots. Odoo-aligned: capability resolved at
+  the point of use, never copied per record. See the fork ADR
+  ``llm_assistant/docs_dev/ADR_2026-07-23_THREAD_TOOL_PROMPT_RESOLUTION.md``.
+
 18.0.1.25.1 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -131,9 +131,15 @@ class MailMessage(models.Model):
         function = tool_call.get("function", {})
         tool_name = function.get("name", "unknown_tool")
 
-        # Validate tool exists in thread if thread model is provided
-        if thread_model and hasattr(thread_model, "tool_ids"):
-            if not thread_model.tool_ids.filtered(lambda t: t.name == tool_name):
+        # Validate tool exists in thread if thread model is provided.
+        # Read the LIVE effective set (assistant-derived in llm_assistant),
+        # not the raw ``tool_ids`` snapshot — otherwise a tool present on the
+        # assistant but absent from a stale per-thread snapshot would be
+        # refused here even though the model was offered it.
+        if thread_model and hasattr(thread_model, "_effective_tools"):
+            if not thread_model._effective_tools().filtered(
+                lambda t: t.name == tool_name
+            ):
                 raise UserError(f"Tool '{tool_name}' not found in thread")
 
         # Validate and parse arguments
@@ -352,11 +358,14 @@ class MailMessage(models.Model):
             else:
                 raise UserError("No thread model available for tool execution")
 
-        # Find the tool in the thread
-        if not hasattr(thread_model, "tool_ids"):
+        # Find the tool in the thread's LIVE effective set (assistant-derived
+        # in llm_assistant), not the raw ``tool_ids`` snapshot.
+        if not hasattr(thread_model, "_effective_tools"):
             raise UserError(f"Thread model {thread_model._name} does not support tools")
 
-        tool = thread_model.tool_ids.filtered(lambda t: t.name == tool_name)[:1]
+        tool = thread_model._effective_tools().filtered(lambda t: t.name == tool_name)[
+            :1
+        ]
         if not tool:
             raise UserError(f"Tool '{tool_name}' not found in thread")
 

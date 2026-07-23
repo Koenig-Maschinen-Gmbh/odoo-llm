@@ -33,6 +33,27 @@ class LLMThreadMock(models.TransientModel):
         string="Model",
         required=False,
     )
+    # CAP-01: ``llm.thread`` gained ``tool_ids_disabled`` / ``tool_ids_extra``
+    # (M2M → ``llm.tool`` with EXPLICIT relation tables). This prototype child
+    # copies every M2M; with an explicit relation the copy would try to reuse
+    # the parent's physical table with a mismatched ``column1``. The mock never
+    # runs tool resolution, so redefine them as NON-STORED (no relation table,
+    # no collision). See the field comment in models/llm_thread.py.
+    tool_ids_disabled = fields.Many2many(
+        "llm.tool",
+        compute="_compute_mock_tool_overrides",
+        store=False,
+    )
+    tool_ids_extra = fields.Many2many(
+        "llm.tool",
+        compute="_compute_mock_tool_overrides",
+        store=False,
+    )
+
+    def _compute_mock_tool_overrides(self):
+        for rec in self:
+            rec.tool_ids_disabled = False
+            rec.tool_ids_extra = False
 
 
 class LLMPromptTest(models.TransientModel):

@@ -1,3 +1,14 @@
+18.0.4.4.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHANGE] **CAP-01: tool-call validation/execution read the LIVE effective
+  set.** ``mail.message.post_tool_call`` and ``execute_tool_call`` now validate
+  and resolve the requested tool against ``thread._effective_tools()`` instead
+  of the raw ``thread.tool_ids`` snapshot. A tool present on the thread's
+  assistant but absent from a stale snapshot is no longer wrongly refused with
+  "Tool not found in thread". Falls back gracefully when the thread model has
+  no ``_effective_tools`` seam.
+
 18.0.4.3.1 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~
 

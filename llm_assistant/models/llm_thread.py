@@ -150,6 +150,45 @@ class LLMThread(models.Model):
         help="Watermark: messages with id <= this are folded into llm_summary.",
     )
 
+    # CAP-01 per-thread tool deviation (override-based, replaces the snapshot).
+    # ``_effective_tools()`` = (assistant.tool_ids | tool_ids_extra) - tool_ids_disabled,
+    # resolved LIVE each turn. These two sets are normally EMPTY — a plain user
+    # chat carries neither, so it always sees its assistant's current tools
+    # (killing the 97%-stale snapshot). They exist for deliberate per-thread
+    # curation (e.g. an orchestrator expert sub-thread that drops the dispatch
+    # tool from the inherited master set).
+    #
+    # ⚠ RELATION TABLES — explicit + distinct, NOT auto. ``llm.thread`` already
+    # has ``tool_ids`` (M2M → ``llm.tool``, AUTO table ``llm_thread_llm_tool_rel``).
+    # A SECOND/THIRD auto M2M to the same comodel on the same model is impossible:
+    # Odoo derives the auto table name from the two model tables only (no field
+    # name), so all three would claim ``llm_thread_llm_tool_rel`` and Odoo raises
+    # "Many2many fields ... use the same table and columns" (OCB fields.py
+    # ~4988-5004). Hence EXPLICIT, distinct ``relation=`` names here.
+    #
+    # Columns are left AUTO on purpose (no explicit column1/column2): the
+    # prototype child ``llm.thread.mock`` (``_name`` + ``_inherit="llm.thread"``,
+    # llm_prompt_test.py) copies every M2M. With an explicit relation the child
+    # would reuse the SAME physical table; auto columns make the child's copy
+    # resolve ``column1`` from its OWN table (``llm_thread_mock_id``), so it does
+    # not clash with the parent on the shared-table key — and the mock redefines
+    # these two fields as non-stored (store=False) so it never creates/reads the
+    # relation table at all. See llm_prompt_test.py.
+    tool_ids_disabled = fields.Many2many(
+        "llm.tool",
+        relation="llm_thread_tool_disabled_rel",
+        string="Disabled Tools",
+        help="Tools removed from this thread's effective set even though its "
+        "assistant offers them (per-thread deviation).",
+    )
+    tool_ids_extra = fields.Many2many(
+        "llm.tool",
+        relation="llm_thread_tool_extra_rel",
+        string="Extra Tools",
+        help="Tools added to this thread's effective set on top of what its "
+        "assistant offers (per-thread deviation).",
+    )
+
     @api.onchange("assistant_id")
     def _onchange_assistant_id(self):
         """Update provider, model and tools when assistant changes"""
@@ -194,6 +233,33 @@ class LLMThread(models.Model):
         if assistant.prompt_id.id:
             update_vals["prompt_id"] = assistant.prompt_id.id
         return self.write(update_vals)
+
+    def _effective_tools(self):
+        """Resolve tools LIVE from the bound assistant plus per-thread deviation.
+
+        ``effective = (base | tool_ids_extra) - tool_ids_disabled`` where
+        ``base`` is the assistant's CURRENT ``tool_ids`` when an assistant is
+        bound, else the base fork's value (the raw ``tool_ids`` column, via
+        ``super()``). Because the base is read live from the assistant, a tool
+        added to the assistant reaches all its threads at once — the per-thread
+        ``tool_ids`` snapshot is no longer an execution source (it survives only
+        as legacy display data and is ignored here when an assistant is bound).
+
+        This is the single gating seam for tool availability (Phase 1). It runs
+        on the hot path (every turn) so it stays cheap: in-memory recordset set
+        operations over already-prefetched M2M relations, no search/read_group.
+
+        Odoo-aligned live capability resolution (see the base docstring).
+
+        Returns an ``llm.tool`` recordset.
+        """
+        self.ensure_one()
+        base = (
+            self.assistant_id.tool_ids
+            if self.assistant_id
+            else super()._effective_tools()
+        )
+        return (base | self.tool_ids_extra) - self.tool_ids_disabled
 
     def action_open_thread(self):
         """Open the thread in the chat client interface
@@ -881,7 +947,9 @@ class LLMThread(models.Model):
         """
         kwargs = {
             "messages": message_history,
-            "tools": self.tool_ids,
+            # CAP-01: resolve the tool set LIVE (assistant-derived) instead of
+            # the stale per-thread ``tool_ids`` snapshot — see _effective_tools.
+            "tools": self._effective_tools(),
             "stream": use_streaming,
             "prepend_messages": self.get_prepend_messages(),
         }

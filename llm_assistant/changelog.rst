@@ -1,3 +1,26 @@
+18.0.1.17.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **CAP-01 live tool resolution (kills 97% snapshot staleness).**
+  ``llm.thread._effective_tools()`` now derives the tool set LIVE from the
+  bound assistant: ``(assistant.tool_ids | tool_ids_extra) - tool_ids_disabled``.
+  A tool added to an assistant reaches all its existing threads instantly — no
+  migration, no "re-select your assistant". Two new per-thread override M2M
+  fields (``tool_ids_extra`` / ``tool_ids_disabled``, normally empty) express
+  deliberate per-thread deviation. ``_prepare_chat_kwargs`` offers the model the
+  effective set, not the raw ``tool_ids`` snapshot (which becomes vestigial when
+  an assistant is bound, retained for no-assistant threads + display).
+* [TECH] The override M2M fields use EXPLICIT distinct relation tables
+  (``llm_thread_tool_disabled_rel`` / ``llm_thread_tool_extra_rel``) with auto
+  columns — a second/third auto M2M to ``llm.tool`` on ``llm.thread`` would
+  collide on the shared auto table name. ``llm.thread.mock`` redefines both as
+  non-stored to avoid materializing the tables. Verified by clean install +
+  registry load.
+* [TEST] ``tests/test_effective_tools.py`` — live derivation, disabled/extra,
+  no-assistant fallback, ``_prepare_chat_kwargs`` wiring, tool validation.
+* [DOC] Fork ADR
+  ``docs_dev/ADR_2026-07-23_THREAD_TOOL_PROMPT_RESOLUTION.md``.
+
 18.0.1.16.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
