@@ -38,6 +38,7 @@
                             <field name="default" />
                             <field name="active" />
                             <field name="requires_user_consent" />
+                            <field name="requires_capability" />
                             <field
                 name="auto_update"
                 invisible="implementation != 'function'"
@@ -74,6 +75,13 @@
                 name="description"
                 placeholder="Describe what this tool does and when to use it"
               />
+                        </page>
+                        <page string="Bundles">
+                            <field name="bundle_ids" widget="many2many_tags" />
+                            <div class="alert alert-info" role="alert">
+                                <p
+                >Bundles group tools into capability packs. Assistants subscribe to bundles (on the assistant form) and thereby offer every tool in the bundle — adding a tool to a bundle reaches all subscribers at once.</p>
+                            </div>
                         </page>
                         <page string="Input Schema">
                             <field

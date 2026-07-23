@@ -1,3 +1,21 @@
+18.0.4.5.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **CAP-02 tool registry — ``llm.tool.bundle``.** A named capability pack
+  of tools (``code``, ``tool_ids``). Assistants subscribe to bundles
+  (``llm.assistant.bundle_ids``, in ``llm_assistant``) instead of linking each
+  tool by hand — retiring the per-addon ``assistant_attach.xml`` + self-heal
+  hooks. Adding a tool to a bundle reaches every subscriber at once. Bundle
+  list/form + a Bundles menu + a Bundles page on the tool form; ACL read for
+  ``base.group_user``, full for ``base.group_system``.
+* [ADD] **Declarative resolver gates on ``llm.tool``.** ``bundle_ids`` (inverse
+  of the bundle's ``tool_ids``) + ``requires_capability`` (e.g. ``multimodal``)
+  + ``_ai_is_available_for(thread)`` — the per-tool availability gate the thread
+  resolver calls (as the calling user, hot-path-cheap): base gates are ``active``
+  (registry) and ``requires_capability`` vs the thread model's ``model_use``.
+  Tool implementations override it (super() first) for consent/context. Makes the
+  seed-capability-contract rule a first-class, declarative tool property.
+
 18.0.4.4.1 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 

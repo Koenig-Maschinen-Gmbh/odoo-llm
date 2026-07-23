@@ -234,19 +234,26 @@ class LLMThread(models.Model):
             update_vals["prompt_id"] = assistant.prompt_id.id
         return self.write(update_vals)
 
-    def _effective_tools(self):
-        """Resolve tools LIVE from the bound assistant plus per-thread deviation.
+    def _candidate_tools(self):
+        """Resolve the candidate tool set LIVE from the bound assistant + deviation.
 
-        ``effective = (base | tool_ids_extra) - tool_ids_disabled`` where
-        ``base`` is the assistant's CURRENT ``tool_ids`` when an assistant is
-        bound, else the base fork's value (the raw ``tool_ids`` column, via
-        ``super()``). Because the base is read live from the assistant, a tool
-        added to the assistant reaches all its threads at once — the per-thread
+        ``candidate = (base | tool_ids_extra) - tool_ids_disabled`` where
+        ``base`` is the assistant's live resolved set
+        (``assistant._resolved_tools()`` = explicit ``tool_ids`` ∪ subscribed
+        bundles) when an assistant is bound, else the base fork's value (the raw
+        ``tool_ids`` column, via ``super()``). Because the base is read live from
+        the assistant, a tool added to the assistant (or to a bundle it
+        subscribes to) reaches all its threads at once — the per-thread
         ``tool_ids`` snapshot is no longer an execution source (it survives only
         as legacy display data and is ignored here when an assistant is bound).
 
-        This is the single gating seam for tool availability (Phase 1). It runs
-        on the hot path (every turn) so it stays cheap: in-memory recordset set
+        The base ``_effective_tools`` then filters this candidate set through
+        each tool's ``_ai_is_available_for`` gate (active / capability / consent)
+        for the calling user. This override is the assistant/bundle/deviation
+        half; the environment gating lives in the base so it applies to
+        no-assistant threads too.
+
+        Runs on the hot path (every turn) → stays cheap: in-memory recordset set
         operations over already-prefetched M2M relations, no search/read_group.
 
         Odoo-aligned live capability resolution (see the base docstring).
@@ -255,9 +262,9 @@ class LLMThread(models.Model):
         """
         self.ensure_one()
         base = (
-            self.assistant_id.tool_ids
+            self.assistant_id._resolved_tools()
             if self.assistant_id
-            else super()._effective_tools()
+            else super()._candidate_tools()
         )
         return (base | self.tool_ids_extra) - self.tool_ids_disabled
 

@@ -1,6 +1,6 @@
 {
     "name": "LLM Tool",
-    "version": "18.0.4.4.1",
+    "version": "18.0.4.5.0",
     "category": "Technical",
     "summary": "Function calling and tool execution for LLM models to interact with Odoo",
     "description": """
@@ -32,6 +32,7 @@
     "data": [
         "security/ir.model.access.csv",
         "views/llm_tool_views.xml",
+        "views/llm_tool_bundle_views.xml",
         "views/llm_tool_consent_config_views.xml",
         "data/llm_tool_data.xml",
         "data/llm_tool_consent_config_data.xml",

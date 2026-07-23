@@ -1,3 +1,21 @@
+18.0.1.18.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **CAP-02 bundle subscription + resolver.** ``llm.assistant.bundle_ids``
+  (subscribe to ``llm.tool.bundle`` capability packs) + ``_resolved_tools()`` =
+  ``(tool_ids | bundle_ids.tool_ids).filtered(active)`` — the assistant's live
+  tool set. A tool added to a subscribed bundle reaches every bound thread at
+  once, retiring the per-assistant ``assistant_attach.xml`` + self-heal hooks.
+* [CHANGE] The CAP-01 ``_effective_tools()`` override is replaced by a
+  ``_candidate_tools()`` override (``assistant._resolved_tools()`` ∪ ``extra`` −
+  ``disabled``); the base ``_effective_tools()`` then applies the per-tool
+  availability gates. Same effective result for existing threads; the resolver is
+  now the single gating point (adds capability/consent gates on top).
+* [ADD] ``assistant_ids`` inverse on ``llm.tool.bundle`` (subscribers display).
+* [TEST] ``tests/test_tool_resolver.py`` — bundle union, live add, inactive
+  bundle/tool exclusion, capability gate (hidden on chat / shown on multimodal),
+  deviation-with-bundles, no-assistant capability gating.
+
 18.0.1.17.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

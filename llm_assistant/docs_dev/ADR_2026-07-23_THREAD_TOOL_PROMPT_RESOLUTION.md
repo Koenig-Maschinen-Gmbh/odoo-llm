@@ -1,6 +1,7 @@
 # ADR — Live Thread Tool Resolution (and the path to prompt/capability resolution)
 
-- **Status:** Accepted — Phase 1 implemented (CAP-01). Phases 2–4 planned.
+- **Status:** Accepted — Phase 1 implemented (CAP-01); Phase 2 (CAP-02) contract
+  pinned below + in progress. Phases 3–4 planned.
 - **Date:** 2026-07-23
 - **Owner:** König AI master thread (sole owner of `addons_apexive/odoo-llm` fork
   + the koenig AI stack).
@@ -201,6 +202,74 @@ clean `-i llm_assistant` on a disposable DB:
   #4).
 
 ---
+
+## Phase 2 (CAP-02) — tool registry (bundles) + one resolver (fork contract)
+
+Widens the single seam into the resolver. Koenig build plan + migration:
+`addons_koenig/koenig_ai/docs_dev/workbench/tool-architecture/PLAN_CAP02_TOOL_REGISTRY_RESOLVER.md`.
+
+### New fork model + fields
+
+- **`llm.tool.bundle`** (`llm_tool`): `name`, `code` (UNIQUE), `active`,
+  `sequence`, `description`, `tool_ids` (M2M → `llm.tool`,
+  relation `llm_tool_bundle_tool_rel`). A named capability pack.
+- **`llm.tool`**: inverse `bundle_ids` (same relation, display) +
+  `requires_capability` (Char, e.g. `multimodal`) — declarative capability gate.
+- **`llm.assistant`**: `bundle_ids` (M2M → `llm.tool.bundle`,
+  relation `llm_assistant_tool_bundle_rel`) — the assistant's bundle
+  subscriptions. New method `_resolved_tools()` =
+  `(tool_ids | bundle_ids.filtered(active).tool_ids).filtered(active)` (live,
+  cheap, prefetched-M2M unions — no `search`).
+
+### Resolver split (the seam is unchanged for readers)
+
+`_effective_tools()` stays the single execution seam but is now
+`candidate ∩ per-tool availability gates`:
+
+- Base `llm.thread._candidate_tools()` → `self.tool_ids` (raw column).
+- Base `llm.thread._effective_tools()` →
+  `self._candidate_tools().filtered(lambda t: t._ai_is_available_for(self))`.
+- `llm_assistant.llm.thread._candidate_tools()` (REPLACES the CAP-01
+  `_effective_tools` override) →
+  `(assistant._resolved_tools() if assistant else super()) | tool_ids_extra) - tool_ids_disabled`.
+- `llm.tool._ai_is_available_for(thread)` — as-user gate, base = `active`
+  (registry) + `requires_capability` vs `thread.model_id.model_use`; tool
+  implementations override (super() first) for consent/context. Cheap: no
+  query beyond prefetched fields.
+
+The **execute-time hard-check** in the tool's own `execute()` remains as
+defense-in-depth (TOOL-02/03 ACL degradation lands there / in the shared RAG
+`source_mixin`), so resolver-filter and tool-self-check are two independent
+layers.
+
+### Consent, budget, context (decisions)
+
+- **Consent → resolver hide-gate** for tools that declare a persistent per-user
+  consent (koenig web tools check `res.users.x_ai_web_search_consent` via the
+  `_ai_is_available_for` override). Deliberate behavior change: consent-missing
+  tools are **hidden** (no wasted round-trip) instead of offered + refused
+  in-band; the execute-time hard-check stays. Full 3-way consolidation is CAP-03.
+- **Budget / rate-limit → execute-time** (already in-band). A per-turn budget
+  query violates the hot-path cheapness constraint (§11.5); the resolver treats
+  budget as the execute-time defense layer, not an offer-set filter.
+- **Context/anchor gate** — extension point only (`_ai_is_available_for`); not
+  implemented (no current consumer).
+
+### Migration / back-compat
+
+- Fully backward compatible: with no bundles + no `requires_capability`, the
+  resolver is byte-for-byte CAP-01.
+- Retires `assistant_attach.xml` + self-heal `hooks.py` (koenig). A koenig
+  migration moves web tools from `assistant.tool_ids` to a `web_research`
+  bundle subscription (one transaction, live-state-preserving, no tool loss).
+
+### M2M relation-table discipline (carried from CAP-01)
+
+`llm.thread.mock` (prototype child) copies every M2M — but the new M2M fields
+live on `llm.tool.bundle` / `llm.assistant`, **not** on `llm.thread`, so the
+mock is unaffected. The new relations use explicit distinct names
+(`llm_tool_bundle_tool_rel`, `llm_assistant_tool_bundle_rel`); none collides
+with an existing same-model auto M2M.
 
 ## Alternatives rejected
 

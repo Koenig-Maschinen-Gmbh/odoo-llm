@@ -3,3 +3,5 @@ access_llm_tool_user,llm.tool.user,model_llm_tool,base.group_user,1,0,0,0
 access_llm_tool_system,llm.tool.system,model_llm_tool,base.group_system,1,1,1,1
 access_llm_tool_consent_config_user,llm.tool.consent.config.user,model_llm_tool_consent_config,base.group_user,1,0,0,0
 access_llm_tool_consent_config_system,llm.tool.consent.config.system,model_llm_tool_consent_config,base.group_system,1,1,1,1
+access_llm_tool_bundle_user,llm.tool.bundle.user,model_llm_tool_bundle,base.group_user,1,0,0,0
+access_llm_tool_bundle_system,llm.tool.bundle.system,model_llm_tool_bundle,base.group_system,1,1,1,1

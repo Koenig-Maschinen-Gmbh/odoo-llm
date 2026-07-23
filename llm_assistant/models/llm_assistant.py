@@ -121,6 +121,22 @@ class LLMAssistant(models.Model):
         tracking=True,
     )
 
+    # CAP-02: capability bundles this assistant subscribes to. The effective
+    # tool set resolves LIVE as ``tool_ids | bundle_ids.tool_ids`` — a tool
+    # added to a subscribed bundle reaches this assistant (and all its threads)
+    # at once, retiring the per-assistant ``assistant_attach.xml`` + self-heal
+    # hook rot. Relation table owned here (llm_assistant depends on llm_tool).
+    bundle_ids = fields.Many2many(
+        "llm.tool.bundle",
+        relation="llm_assistant_tool_bundle_rel",
+        column1="assistant_id",
+        column2="bundle_id",
+        string="Tool Bundles",
+        tracking=True,
+        help="Capability packs this assistant subscribes to. The assistant "
+        "offers every tool in each subscribed bundle, live.",
+    )
+
     tool_calls_max = fields.Integer(
         string="Max Tool Calls",
         default=5,
@@ -544,3 +560,20 @@ class LLMAssistant(models.Model):
     def get_assistant_by_code(self, code):
         """Get assistant by code"""
         return self.search([("code", "=", code)], limit=1)
+
+    def _resolved_tools(self):
+        """CAP-02: the assistant's live tool set (explicit ∪ subscribed bundles).
+
+        ``tool_ids`` (explicit picks) unioned with the tools of every ACTIVE
+        subscribed bundle, restricted to ACTIVE tools. Read live each turn — a
+        tool added to a subscribed bundle reaches every thread bound to this
+        assistant instantly, with no snapshot to rot.
+
+        Cheap on the hot path: in-memory recordset unions over already-prefetched
+        M2M relations, no ``search``/``read_group``/SQL. Used as the base of
+        ``llm.thread._candidate_tools`` (the resolver then applies per-tool
+        capability/consent gates).
+        """
+        self.ensure_one()
+        bundle_tools = self.bundle_ids.filtered("active").tool_ids
+        return (self.tool_ids | bundle_tools).filtered("active")

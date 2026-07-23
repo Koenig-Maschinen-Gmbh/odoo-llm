@@ -89,6 +89,32 @@ class LLMTool(models.Model):
         help="If true, the user must consent to the execution of this tool",
     )
 
+    # CAP-02 tool registry: which bundles this tool belongs to. Assistants
+    # subscribe to bundles (``llm.assistant.bundle_ids``) and thereby offer all
+    # of a bundle's tools — retiring per-assistant ``assistant_attach.xml`` +
+    # self-heal hooks. Inverse of ``llm.tool.bundle.tool_ids``.
+    bundle_ids = fields.Many2many(
+        "llm.tool.bundle",
+        relation="llm_tool_bundle_tool_rel",
+        column1="tool_id",
+        column2="bundle_id",
+        string="Bundles",
+        help="Capability bundles this tool belongs to. Assistants subscribing "
+        "to a bundle offer all of its tools.",
+    )
+
+    # CAP-02 declarative capability gate. When set (e.g. 'multimodal'), the
+    # resolver (``llm.thread._effective_tools``) only offers this tool on a
+    # thread whose model has the matching ``model_use``. Empty = no gate. This
+    # makes the seed-capability-contract rule (vision/OCR/audio need a
+    # multimodal model) a first-class, declarative tool property instead of an
+    # ad-hoc special case.
+    requires_capability = fields.Char(
+        string="Requires Model Capability",
+        help="If set (e.g. 'multimodal'), this tool is only offered when the "
+        "thread's model has this model_use. Empty = available on any model.",
+    )
+
     # Default tool flag
     default = fields.Boolean(
         default=False,
@@ -192,6 +218,35 @@ class LLMTool(models.Model):
         # Get MCP-compatible schema
         schema = func_meta.arg_model.model_json_schema(by_alias=True)
         return schema
+
+    def _ai_is_available_for(self, thread):
+        """CAP-02 resolver gate: may this tool be offered on ``thread`` this turn?
+
+        Called by ``llm.thread._effective_tools`` for each candidate tool, as the
+        CALLING user (never sudo'd), on the hot path — so it must stay cheap
+        (prefetched-field reads only, no ``search``/``read_group``/SQL).
+
+        Base gates:
+          * ``active`` — a deactivated tool is never offered (registry gate);
+          * ``requires_capability`` — offered only when the thread's model has the
+            matching ``model_use`` (declarative capability gate).
+
+        Tool implementations override this (calling ``super()`` first) to add a
+        per-implementation gate — e.g. a persistent per-user consent check that
+        hides the tool until the user has acknowledged a data-protection notice.
+        The tool's own ``execute()`` still hard-checks as defense-in-depth, so
+        the resolver filter and the tool self-check are two independent layers.
+
+        Returns ``True`` when the tool may be offered, ``False`` to hide it.
+        """
+        self.ensure_one()
+        if not self.active:
+            return False
+        if self.requires_capability:
+            model = thread.model_id
+            if not model or model.model_use != self.requires_capability:
+                return False
+        return True
 
     def execute(self, parameters):
         """Execute this tool with validated parameters"""

@@ -1,4 +1,5 @@
 from . import llm_tool
+from . import llm_tool_bundle
 from . import llm_tool_record_retriever
 from . import llm_provider
 from . import llm_model

@@ -1,3 +1,16 @@
+18.0.1.27.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHANGE] **CAP-02: resolver split — the ``_effective_tools()`` seam is now
+  ``candidate ∩ per-turn availability gates``.** New ``_candidate_tools()``
+  (base: the raw ``tool_ids`` column) yields the assistant/bundle/deviation set;
+  ``_effective_tools()`` then filters it through each tool's
+  ``llm.tool._ai_is_available_for(thread)`` gate (active / capability / consent)
+  for the calling user. The single execution seam is unchanged for every reader;
+  the environment gates now apply to no-assistant threads too. Backward
+  compatible: with no ``requires_capability`` and no consent override, the gate
+  is a pass-through (byte-for-byte CAP-01).
+
 18.0.1.26.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -9,6 +9,15 @@
         sequence="40"
     />
 
+    <!-- Tool Bundles → Configuration → AI Services -->
+    <menuitem
+        id="menu_llm_tool_bundle"
+        name="Tool Bundles"
+        action="action_llm_tool_bundle"
+        parent="llm.menu_llm_ai_services"
+        sequence="45"
+    />
+
     <!-- Tool Consent → Configuration → AI Services -->
     <menuitem
         id="menu_llm_tool_consent_config"
