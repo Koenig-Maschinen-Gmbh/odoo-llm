@@ -92,14 +92,20 @@ Phase 2 widens the same method into the full resolver
 `execute()` remains as defense-in-depth (TOOL-02/03 ACL degradation lands there),
 so the resolver filtering and the tool self-check are two independent layers.
 
-### Prompt-fragment interface (Phase 3 — forward reference only)
+### Prompt-fragment interface (Phase 3 — IMPLEMENTED 2026-07-23 as CAP-03)
 
-Not implemented here. Phase 3 replaces the two uncoordinated prompt hooks
+**Status: DONE.** CAP-03 replaced the two uncoordinated prompt hooks
 (`llm.provider._prepare_prepend_messages` + `llm.thread.get_prepend_messages`,
-which koenig patches in four places) with one deterministic assembler where each
-tool/knowledge source contributes an ordered `_system_prompt_fragment()`. The
-KNOW-04 domain block shipped 2026-07-23 folds into that assembler. Recorded here
-so the Phase 1 field/method names are chosen to not block it.
+which koenig patched in four places) with one deterministic assembler:
+`llm.thread._build_system_messages()`. Each contributor overrides
+`_system_prompt_fragments()` (super()+append) returning `SystemPromptFragment`
+namedtuples with explicit `sequence` numbers. Per-tool guidance via
+`llm.tool._system_prompt_fragment(thread)` keyed off `_effective_tools()`
+(CAP-02 fix — NOT `assistant.tool_ids`). Token budget via ICP
+`llm_assistant.prompt_token_budget`. The KNOW-04 domain block, memory,
+policy/brief, web-research rules, record-anchor note, and consent all
+folded into the assembler as ordered fragments. Full design decisions in
+`addons_koenig/koenig_ai/docs_dev/workbench/tool-architecture/PLAN_CAP03_PROMPT_ASSEMBLER.md`.
 
 ### Back-compat / migration
 

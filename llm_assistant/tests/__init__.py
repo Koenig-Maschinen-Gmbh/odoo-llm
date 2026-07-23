@@ -6,3 +6,4 @@ from . import test_stream_trace_sink
 from . import test_stream_duration_cap
 from . import test_effective_tools
 from . import test_tool_resolver
+from . import test_prompt_assembler

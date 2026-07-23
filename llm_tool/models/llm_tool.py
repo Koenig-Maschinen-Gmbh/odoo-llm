@@ -248,6 +248,25 @@ class LLMTool(models.Model):
                 return False
         return True
 
+    def _system_prompt_fragment(self, thread):
+        """Contribute a system-prompt fragment for this tool (CAP-03).
+
+        Called by ``llm.thread._build_system_messages()`` for each tool in
+        ``thread._effective_tools()`` (CAP-02 effective set, NOT
+        ``assistant.tool_ids``). This fixes the "guidance for a hidden tool"
+        bug — a tool hidden by the resolver contributes nothing.
+
+        Base: returns ``None`` (no fragment). Tool implementations override
+        to contribute guidance (e.g. web-research rules).
+
+        Args:
+            thread: the ``llm.thread`` requesting the fragment.
+
+        Returns:
+            ``SystemPromptFragment`` or ``None``.
+        """
+        return None
+
     def execute(self, parameters):
         """Execute this tool with validated parameters"""
         # Get the actual method to execute

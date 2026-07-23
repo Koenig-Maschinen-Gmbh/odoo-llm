@@ -25,12 +25,39 @@ SOFTWARE.
 
 import logging
 import time
+from collections import namedtuple
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 from odoo.tools import html2plaintext
 
 _logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# CAP-03: deterministic prompt-fragment assembler.
+#
+# The system prompt is assembled by ONE method (``_build_system_messages``)
+# that collects ordered fragments from contributors, sorts by ``sequence``,
+# applies a token budget, and composes the final message list.
+#
+# Each fragment is a ``SystemPromptFragment`` namedtuple. Contributors override
+# ``_system_prompt_fragments()`` (super() + append) to add their own fragments
+# with explicit ``sequence`` numbers — the assembler sorts, so order is
+# deterministic regardless of MRO (fixes the ordering bug of the old
+# ``get_prepend_messages`` override chain).
+#
+# OCB precedent: ``ir.ui.view`` arch composition — multiple inheriting views
+# (contributors) apply XPaths in ``priority`` order (deterministic, not MRO).
+# ---------------------------------------------------------------------------
+SystemPromptFragment = namedtuple(
+    "SystemPromptFragment",
+    ["sequence", "role", "content", "droppable", "source"],
+)
+# sequence: int — determines order (lower = earlier in the prompt).
+# role: str — usually "system".
+# content: str — the prompt text.
+# droppable: bool — True = may be dropped by the token budget (R4).
+# source: str — identifier for dedup + debugging (e.g. "guardrails", "web_research").
 
 
 class GenerationCancelled(BaseException):
@@ -396,22 +423,109 @@ class LLMThread(models.Model):
         return ""
 
     def get_prepend_messages(self):
-        """Hook: return a list of formatted messages to prepend to the conversation."""
-        self.ensure_one()
+        """Hook: return a list of formatted messages to prepend to the conversation.
 
-        messages = []
+        CAP-03: delegates to ``_build_system_messages()``, the deterministic
+        prompt-fragment assembler. Kept as a backward-compat shim so external
+        callers and tests that call ``get_prepend_messages()`` still work.
+        Koenig contributors now override ``_system_prompt_fragments()`` (not
+        this method) to add their fragments.
+        """
+        self.ensure_one()
+        return self._build_system_messages()
+
+    # ------------------------------------------------------------------
+    # CAP-03: deterministic prompt-fragment assembler.
+    # ------------------------------------------------------------------
+
+    def _build_system_messages(self):
+        """ONE deterministic, ordered assembler for the system prompt.
+
+        Collects fragments from three sources:
+        1. ``_system_prompt_fragments()`` — model-level contributors (super()
+           chain: persona, summary, guardrails, brief, domain, context, memory,
+           anchor). Each contributor appends ``SystemPromptFragment`` namedtuples
+           with an explicit ``sequence`` number.
+        2. ``tool._system_prompt_fragment(self)`` — per-tool guidance, called
+           for each tool in ``_effective_tools()`` (CAP-02 fix: effective set,
+           not ``assistant.tool_ids``). Fragments deduplicated by ``source``.
+        3. ``_consent_prompt_fragment()`` — consent instruction for
+           ``requires_user_consent`` tools in the effective set.
+
+        All fragments are sorted by ``sequence`` (deterministic order,
+        regardless of MRO), then the token budget drops droppable fragments
+        in reverse sequence order when over cap (R4).
+
+        Returns a list of ``{"role": ..., "content": ...}`` dicts — the same
+        format as the old ``get_prepend_messages()``.
+        """
+        self.ensure_one()
+        fragments = list(self._system_prompt_fragments())
+
+        # Per-tool fragments (effective tools only — CAP-02 fix).
+        seen_sources = {f.source for f in fragments}
+        for tool in self._effective_tools():
+            tool_fragment = tool._system_prompt_fragment(self)
+            if tool_fragment and tool_fragment.source not in seen_sources:
+                fragments.append(tool_fragment)
+                seen_sources.add(tool_fragment.source)
+
+        # Consent fragment (from effective tools with requires_user_consent).
+        consent_fragment = self._consent_prompt_fragment()
+        if consent_fragment:
+            fragments.append(consent_fragment)
+
+        # Deterministic order: sort by sequence (stable — preserves relative
+        # order of fragments with the same sequence, e.g. multiple persona msgs).
+        fragments.sort(key=lambda f: f.sequence)
+
+        # Token budget: drop droppable fragments in reverse sequence order.
+        fragments = self._apply_token_budget(fragments)
+
+        # Compose the final message list (skip empty fragments).
+        return [{"role": f.role, "content": f.content} for f in fragments if f.content]
+
+    def _system_prompt_fragments(self):
+        """Return the base system-prompt fragments (persona + rolling summary).
+
+        Koenig contributors override this (super() + append) to add their own
+        fragments with explicit ``sequence`` numbers. The assembler sorts by
+        sequence, so the order is deterministic regardless of MRO.
+
+        Base fragments (fork-only, no koenig):
+        - Persona (seq=30, not droppable) — from ``prompt_id.get_messages()``.
+        - Rolling summary (seq=90, droppable) — D8 ``llm_summary``.
+        """
+        fragments = []
+
+        # Persona (from prompt_id).
         if self.prompt_id:
             try:
-                # Get messages from the prompt with enhanced context
                 messages = self.prompt_id.get_messages(self.get_context())
+                for i, msg in enumerate(messages):
+                    # get_messages() may return content as a string or a
+                    # multimodal list (``[{"type": "text", "text": ...}]``).
+                    # Extract the text — system messages are always text.
+                    raw_content = msg.get("content", "")
+                    if isinstance(raw_content, list):
+                        text_content = self._extract_message_content(msg)
+                    else:
+                        text_content = raw_content
+                    fragments.append(
+                        SystemPromptFragment(
+                            sequence=30 + i,
+                            role=msg.get("role", "system"),
+                            content=text_content,
+                            droppable=False,
+                            source="persona",
+                        )
+                    )
             except Exception as e:
                 _logger.error(
                     "Error getting messages from prompt '%s': %s",
                     self.prompt_id.name,
                     e,
                 )
-                # Continue without prompt messages rather than failing completely
-                # Post a user-friendly warning to the thread
                 self.message_post(
                     body=_(
                         "Note: The prompt '%s' could not be loaded. "
@@ -420,22 +534,88 @@ class LLMThread(models.Model):
                     % (self.prompt_id.name, str(e)),
                 )
 
-        # D8 (P-MEM): append rolling summary as a system block when set.
+        # D8 (P-MEM): rolling summary as a system block when set.
         # Folded messages are excluded from get_llm_messages() so summary +
         # raw never overlap.
         if self.llm_summary:
-            messages = list(messages) + [
-                {
-                    "role": "system",
-                    "content": (
+            fragments.append(
+                SystemPromptFragment(
+                    sequence=90,
+                    role="system",
+                    content=(
                         "Summary of the earlier conversation "
                         "(messages before this point were removed from context):\n"
                         + self.llm_summary
                     ),
-                }
-            ]
+                    droppable=True,
+                    source="summary",
+                )
+            )
 
-        return messages
+        return fragments
+
+    def _consent_prompt_fragment(self):
+        """Consent instruction for ``requires_user_consent`` tools in the
+        effective set (R5 — single source, from effective tools).
+
+        Returns a ``SystemPromptFragment`` (seq=100, not droppable) or ``None``
+        when no consent-requiring tool is offered this turn.
+        """
+        consent_tools = self._effective_tools().filtered(
+            lambda t: t.requires_user_consent
+        )
+        if not consent_tools:
+            return None
+        config = self.env["llm.tool.consent.config"].get_active_config()
+        tool_names = ", ".join([f"'{t.name}'" for t in consent_tools])
+        content = config.system_message_template.format(tool_names=tool_names)
+        return SystemPromptFragment(
+            sequence=100,
+            role="system",
+            content=content,
+            droppable=False,
+            source="consent",
+        )
+
+    def _apply_token_budget(self, fragments):
+        """Drop droppable fragments in reverse sequence order when over cap (R4).
+
+        The cap is configurable via ICP ``llm_assistant.prompt_token_budget``
+        (default 8000 tokens ≈ 32000 chars). Fragments with ``droppable=False``
+        (guardrails, brief, persona, consent) are NEVER dropped.
+
+        Uses a chars//4 token estimate (``_koenig_tokens_from_chars`` when
+        available from koenig_ai_core; falls back to the same formula).
+        """
+        if not fragments:
+            return fragments
+        try:
+            cap_str = (
+                self.env["ir.config_parameter"]
+                .sudo()
+                .get_param("llm_assistant.prompt_token_budget")
+            )
+            cap_tokens = int(cap_str) if cap_str else 8000
+        except Exception:
+            cap_tokens = 8000
+        cap_chars = cap_tokens * 4
+
+        total_chars = sum(len(f.content or "") for f in fragments)
+        if total_chars <= cap_chars:
+            return fragments
+
+        # Drop droppable fragments in reverse sequence order (highest first).
+        result = list(fragments)
+        for frag in sorted(
+            [f for f in result if f.droppable],
+            key=lambda f: f.sequence,
+            reverse=True,
+        ):
+            if total_chars <= cap_chars:
+                break
+            result.remove(frag)
+            total_chars -= len(frag.content or "")
+        return result
 
     def generate_messages(self, last_message, *, loop_control_check=None):
         """Generate messages with actual AI intelligence.
@@ -951,6 +1131,10 @@ class LLMThread(models.Model):
         `final_answer=True` appends a transient nudge (agentic loop cap reached)
         so the model answers from what it has instead of calling more tools. Tools
         stay available on purpose (see generate_messages).
+
+        CAP-03: ``prepend_messages`` is built by ``_build_system_messages()``
+        (the deterministic prompt-fragment assembler) instead of the old
+        ``get_prepend_messages()`` hook chain.
         """
         kwargs = {
             "messages": message_history,
@@ -958,7 +1142,9 @@ class LLMThread(models.Model):
             # the stale per-thread ``tool_ids`` snapshot — see _effective_tools.
             "tools": self._effective_tools(),
             "stream": use_streaming,
-            "prepend_messages": self.get_prepend_messages(),
+            # CAP-03: deterministic ordered assembler (persona, guardrails,
+            # per-tool guidance, memory, domain, consent — all in one place).
+            "prepend_messages": self._build_system_messages(),
         }
         if final_answer:
             kwargs["append_messages"] = [

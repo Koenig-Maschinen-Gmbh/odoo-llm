@@ -1,3 +1,23 @@
+18.0.1.19.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **CAP-03 deterministic prompt-fragment assembler.**
+  ``_build_system_messages()`` replaces the ``get_prepend_messages()``
+  override chain with ONE assembler: collects ordered fragments from
+  ``_system_prompt_fragments()`` (super() chain) + per-tool
+  ``_system_prompt_fragment(thread)`` (effective tools only, CAP-02 fix) +
+  consent fragment, sorts by ``sequence`` (deterministic order, not MRO),
+  applies a token budget (droppable fragments dropped in reverse sequence).
+  ``get_prepend_messages()`` kept as a backward-compat shim.
+* [ADD] ``SystemPromptFragment`` namedtuple (sequence, role, content,
+  droppable, source) — the fragment protocol.
+* [ADD] ``llm.tool._system_prompt_fragment(thread)`` — per-tool guidance
+  hook (base: returns ``None``).
+* [ADD] Token budget via ICP ``llm_assistant.prompt_token_budget``
+  (default 8000 tokens).
+* [TEST] ``tests/test_prompt_assembler.py`` — 13 tests: order, budget,
+  per-tool-effective (CAP-02 fix), consent, backward compat, dedup.
+
 18.0.1.18.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

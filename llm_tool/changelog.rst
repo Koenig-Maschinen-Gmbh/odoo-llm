@@ -1,3 +1,14 @@
+18.0.4.6.0 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHANGE] **CAP-03: consent injection retired from provider.** The
+  ``_prepare_prepend_messages`` override on ``llm.provider`` is retired
+  to a pass-through. Consent is now a fragment in the thread assembler
+  (``llm.thread._consent_prompt_fragment``), sourced from the effective
+  tool set.
+* [ADD] ``llm.tool._system_prompt_fragment(thread)`` — per-tool guidance
+  hook (base: returns ``None``).
+
 18.0.4.5.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
