@@ -1,3 +1,19 @@
+18.0.4.4.1 (2026-07-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX][TEST] ``test_llm_tool_concurrency.TestLLMToolSync`` — the 9 sync tests
+  assigned the class-level ``_tool_registry`` / ``_xml_managed_keys`` on a
+  RECORDSET (``self.env['llm.tool']._tool_registry = ...``), which Odoo 18
+  forbids ("attribute is read-only") AND which trips the ``check_attrs`` test
+  isolation guard when done on the class. Now registered as ``classPatch`` on
+  the model class (setUpClass) with a per-test reset in setUp — the sanctioned
+  Odoo 18 mechanism (exempts them from the guard + restores originals). Also
+  corrected ``test_sync_deactivates_missing_tool``: it expected an EMPTY
+  registry to deactivate an orphan, but ``_sync_tools_to_db`` deliberately
+  skips all deactivation on an empty registry (an empty scan must never wipe
+  every tool); the test now uses a non-empty registry that omits the orphan and
+  additionally asserts a kept tool survives. Whole ``llm_tool`` suite green.
+
 18.0.4.4.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
