@@ -254,18 +254,23 @@ class LLMKnowledgeChunk(models.Model):
             )
 
     @api.model
-    def search(self, args, offset=0, limit=None, order=None, **kwargs):
+    def search(self, args, offset=0, limit=None, order=None, **kwargs):  # noqa: C901
         count = kwargs.pop("count", False)
+        # Pop custom kwargs that BaseModel.search() does not accept — they are
+        # consumed below and must NOT leak into the super().search() fallback.
+        specific_collection_id = kwargs.pop("collection_id", None)
+        query_vector = kwargs.pop("query_vector", None)
+        query_min_similarity = kwargs.pop("query_min_similarity", None)
+        query_operator = kwargs.pop("query_operator", None)
+        explicit_vector_search_term = kwargs.pop("vector_search_term", None)
 
         # Parse domain to extract vector search term and remove embedding clauses
         vector_search_term, search_args = self._parse_vector_search_domain(args)
 
         # Override with explicit vector_search_term from kwargs if provided
-        if "vector_search_term" in kwargs:
-            vector_search_term = kwargs["vector_search_term"]
+        if explicit_vector_search_term:
+            vector_search_term = explicit_vector_search_term
 
-        query_vector = kwargs.get("query_vector")
-        specific_collection_id = kwargs.get("collection_id")
         if query_vector and not specific_collection_id:
             raise UserError(
                 _(
@@ -318,13 +323,8 @@ class LLMKnowledgeChunk(models.Model):
             vector_search_term=vector_search_term,
             model_vector_map=model_vector_map,
             search_args=search_args,
-            min_similarity=kwargs.get(
-                "query_min_similarity",
-                self.env.context.get("search_min_similarity", 0.5),
-            ),
-            query_operator=kwargs.get(
-                "query_operator", self.env.context.get("search_vector_operator", "<=>")
-            ),
+            min_similarity=query_min_similarity or self.env.context.get("search_min_similarity", 0.5),
+            query_operator=query_operator or self.env.context.get("search_vector_operator", "<=>"),
             offset=offset,
             limit=limit,
             count=count,

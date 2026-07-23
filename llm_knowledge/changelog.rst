@@ -1,3 +1,18 @@
+18.0.1.4.2 (2026-07-23)
+------------------------
+
+* [KOENIG][FIX] ``llm.knowledge.chunk.search()`` override no longer leaks its
+  custom kwargs (``collection_id``, ``query_vector``, ``query_min_similarity``,
+  ``query_operator``, ``vector_search_term``) into ``super().search()`` on the
+  embedding-failure fallback path. When embedding generation fails (e.g. the
+  IONOS embeddings endpoint returns 502), the override falls back to a plain
+  ORM search; previously the leftover ``collection_id`` kwarg reached
+  ``BaseModel.search()`` → ``TypeError: search() got an unexpected keyword
+  argument 'collection_id'``, crashing every RAG tool
+  (``koenig_spare_part_lookup``, ``koenig_attachment_search``,
+  ``koenig_wiki_search``) instead of degrading gracefully. All custom kwargs are
+  now popped at the top of the override before any ``super().search()`` call.
+
 18.0.1.4.1 (2026-07-16)
 ------------------------
 
