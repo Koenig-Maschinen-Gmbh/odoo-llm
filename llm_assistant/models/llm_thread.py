@@ -1030,7 +1030,7 @@ class LLMThread(models.Model):
             model_chain.append(fallback_model)
 
         last_exc = None
-        for chain_model in model_chain:
+        for chain_idx, chain_model in enumerate(model_chain):
             model_su = chain_model
             if last_exc is not None:
                 _logger.warning(
@@ -1126,6 +1126,30 @@ class LLMThread(models.Model):
                 except TransientLLMError as exc:
                     # TEL-01: trace the handler-phase failure before retry/raise.
                     self._finalize_llm_trace(request_trace, sink, "error", exc)
+                    # Phase-3 (2026-07-24): a duration-cap kill is near-
+                    # deterministic for a given (context, model, effort) triple —
+                    # re-issuing the identical request reproduces the same kill
+                    # while burning the full cap per attempt (observed on
+                    # 2026-07-24: 3×180s dead retries; the RES-01 fallback then
+                    # completed the identical turn in ~100s). On a cap kill,
+                    # skip the remaining same-model retries and hop to the
+                    # fallback model immediately. With NO fallback configured,
+                    # keep the legacy same-model retry (a genuinely stalled
+                    # provider stream can recover on a later attempt).
+                    if (
+                        sink.get("duration_cap_kill")
+                        and chain_idx < len(model_chain) - 1
+                    ):
+                        _logger.warning(
+                            "Thread %s: stream killed by the total-duration cap — "
+                            "hopping to fallback model %s instead of identical "
+                            "retries (%s)",
+                            self.id,
+                            model_chain[chain_idx + 1].name,
+                            exc,
+                        )
+                        last_exc = exc
+                        break
                     if attempt < max_retries - 1:
                         wait = backoff_base * (2**attempt)
                         _logger.warning(
@@ -1391,6 +1415,21 @@ class LLMThread(models.Model):
                 order="create_date DESC, write_date DESC, id DESC",
                 limit=limit,
             )
+            # Phase-3 (2026-07-24): pin the LATEST user message. In long
+            # tool-call runs the N-message window can scroll the user's
+            # question out of context; the model then silently drifts from the
+            # original intent (observed: "list ALL Swiss customers" narrowed to
+            # "Top 10 by volume" once the question had scrolled out of a
+            # 25-message window). The pin costs at most one extra message of
+            # context; folded (summarized) user messages are not re-pinned
+            # (the watermark domain above already excludes them).
+            latest_user = self.env["mail.message"].search(
+                domain + [("llm_role", "=", "user")],
+                order="id DESC",
+                limit=1,
+            )
+            if latest_user and latest_user not in recent_messages:
+                recent_messages |= latest_user
             # 2. Sort them chronologically for LLM context (ASC order)
             return recent_messages.sorted(lambda m: (m.create_date, m.write_date, m.id))
         # If no limit, get all messages in chronological order
@@ -1662,6 +1701,11 @@ class LLMThread(models.Model):
                         )
                 # Partial content is KEPT (message stays posted); the error
                 # is annotated on the trace by the caller's finalize step.
+                if trace_sink is not None:
+                    # Phase-3 (2026-07-24): flag the kill so the retry loop can
+                    # skip futile identical retries and hop to the fallback
+                    # model immediately (see _generate_assistant_response).
+                    trace_sink["duration_cap_kill"] = True
                 _sink_fill_end(message)
                 raise TransientLLMError(
                     _(

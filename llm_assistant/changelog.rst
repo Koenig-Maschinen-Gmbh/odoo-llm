@@ -1,3 +1,27 @@
+18.0.1.22.0 (2026-07-24)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **Duration-cap kills now hop to the fallback model immediately**
+  (R1 — no more identical same-model retries).  A PERF-09 total-duration-cap
+  kill is near-deterministic for a given (context, model, effort) triple:
+  re-issuing the identical request reproduces the same kill while burning the
+  full cap per attempt (observed on intranettest 2026-07-24: three hard runs
+  each burned 3×180s on identical retries; the RES-01 fallback then completed
+  the identical turn in ~100s).  ``_handle_streaming_response`` now flags the
+  sink (``duration_cap_kill``) and ``_generate_assistant_response`` skips the
+  remaining same-model retries on a cap kill when a fallback model is
+  configured, hopping straight to it.  With NO fallback configured the legacy
+  same-model retry is kept (a genuinely stalled provider stream can recover).
+  Regression guard: the fork's ``test_retry_loop_integration`` (no fallback)
+  still asserts 3 attempts.
+* [FIX] **The latest user message is pinned in the** ``get_llm_messages``
+  **window** (R2).  In long tool-call runs the 25-message window can scroll
+  the user's question out of context; the model then silently drifts from the
+  original intent (observed: "list ALL Swiss customers" narrowed to "Top 10 by
+  volume" once the question had scrolled out).  The pin costs at most one
+  extra message of context; folded (summarized) user messages are not
+  re-pinned (the D8 watermark already excludes them).
+
 18.0.1.21.0 (2026-07-24)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
