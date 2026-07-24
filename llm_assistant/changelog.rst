@@ -1,3 +1,17 @@
+18.0.1.21.0 (2026-07-24)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHANGE] **Synthesis nudge strengthened to forbid reasoning preamble.**
+  ``_prepare_chat_kwargs`` (``final_answer=True`` path): the transient nudge
+  now explicitly instructs the model to provide ONLY the final answer with no
+  preamble, meta-commentary, or transitional phrases ("Now I have all the
+  data", "Let me compile the results").  Phase-2 baseline found the
+  ``sap_breakdown`` answer began with "Now I have all the data needed. Let me
+  compile the results." before the actual table — the judge penalises it and
+  it wastes output tokens.  Verified on intranettest: probe answer starts
+  directly with "Here is the breakdown of SAP sale orders for 2024…" (no
+  preamble).
+
 18.0.1.20.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

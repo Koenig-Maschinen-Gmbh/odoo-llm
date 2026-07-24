@@ -1317,6 +1317,12 @@ class LLMThread(models.Model):
         CAP-03: ``prepend_messages`` is built by ``_build_system_messages()``
         (the deterministic prompt-fragment assembler) instead of the old
         ``get_prepend_messages()`` hook chain.
+
+        Phase-3 (2026-07-24): strengthened the nudge to explicitly forbid
+        reasoning preamble ("Now I have all the data…", "Let me compile…").
+        Models (esp. GLM-5.2) were emitting meta-commentary before the actual
+        answer on the synthesis turn — the judge penalises it and it wastes
+        output tokens.
         """
         kwargs = {
             "messages": message_history,
@@ -1333,9 +1339,14 @@ class LLMThread(models.Model):
                 {
                     "role": "system",
                     "content": (
-                        "You now have enough information from the tools. Answer my "
-                        "question directly and completely using the tool results "
-                        "above, in my language. Do NOT call any more tools."
+                        "You now have enough information from the tools. "
+                        "Provide ONLY your final answer — no preamble, no "
+                        "meta-commentary about having gathered data, and no "
+                        "transitional phrases such as 'Now I have all the "
+                        "data' or 'Let me compile the results'. Start "
+                        "directly with the answer content. Answer completely "
+                        "using the tool results above, in my language. Do "
+                        "NOT call any more tools."
                     ),
                 }
             ]
