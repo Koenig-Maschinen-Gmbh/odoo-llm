@@ -1,6 +1,7 @@
 /** @odoo-module **/
 
 import {
+    accumulateReasoningText,
     buildOptimisticMessageBody,
     buildTransientStatusMessage,
     linkMessagesToThread,
@@ -65,6 +66,13 @@ export const llmStoreService = {
             //   (c) F5 / full reload (resets to write_date sort — natural on
             //       page reload since JS state is wiped)
             _threadOrderPin: null,
+
+            // FIX-4d: id of the message currently receiving reasoning chunks
+            // (Kilo-Code-style "Thinking" section). The message component
+            // auto-opens its collapsible reasoning block while it is the
+            // active reasoning target; cleared on stream stop / run_done so
+            // the block auto-collapses when the run finishes.
+            activeReasoningMessageId: null,
 
             // Computed properties - using mailStore as source of truth
             get activeLLMThread() {
@@ -411,6 +419,38 @@ export const llmStoreService = {
             },
 
             /**
+             * FIX-4d — accumulate a reasoning chunk on a message's
+             * ``body_json.reasoning`` field and mark it as the active
+             * reasoning target (the message component auto-opens its
+             * collapsible "Thinking" block for the active target).
+             * Shared by the bus subscriber (orchestration path) and the
+             * SSE ``reasoning_chunk`` case (direct-LLM path). No-op for
+             * unknown messages or empty chunks.
+             */
+            _accumulateReasoning(messageId, reasoningText) {
+                if (typeof messageId !== "number" || !reasoningText) {
+                    return;
+                }
+                const msg = mailStore.Message.get(messageId);
+                if (!msg) {
+                    return;
+                }
+                const updated = accumulateReasoningText(
+                    msg.body_json?.reasoning,
+                    reasoningText
+                );
+                mailStore.insert({
+                    "mail.message": [
+                        {
+                            id: messageId,
+                            body_json: { reasoning: updated },
+                        },
+                    ],
+                });
+                this.activeReasoningMessageId = messageId;
+            },
+
+            /**
              * FIX-4c (TRACKER_2026-07-25_UI_RESEARCH.md §4): browser
              * staleness guard. Returns true if the incoming message body is
              * a strict downgrade — the incoming body is shorter than the
@@ -438,9 +478,30 @@ export const llmStoreService = {
                 if (!isActive) {
                     return false;
                 }
-                // Strict downgrade: incoming body is shorter than what's
-                // already rendered. The placeholder ("Thinking...") is always
-                // shorter than the streamed answer, so it gets filtered out.
+                // FIX-4c (2026-07-25): narrow the guard to the placeholder
+                // pattern only. The previous "any shorter body" guard also
+                // skipped the legitimate final message when _strip_preamble
+                // + linkify made it shorter than the streamed body —
+                // silently defeating Phase-3 F8.
+                // Ref: TRACKER_2026-07-25_UI_RESEARCH.md §12 V7.
+                //
+                // The stale placeholder body is "Thinking..." — possibly
+                // double-escaped as "&lt;p&gt;Thinking...&lt;/p&gt;" by
+                // OCB's message_post escape(str) (FIX-4a wraps in Markup,
+                // but the guard is belt-and-suspenders for the direct-SSE
+                // path too). Decode entities + strip HTML to check.
+                const incomingText = incomingBody
+                    .replace(/<[^>]*>/g, "")
+                    .replace(/&lt;/g, "<")
+                    .replace(/&gt;/g, ">")
+                    .replace(/<[^>]*>/g, "")
+                    .trim();
+                const isPlaceholder =
+                    incomingText.length < 30 && /^thinking\.{0,3}$/i.test(incomingText);
+                if (!isPlaceholder) {
+                    return false; // Not a placeholder — allow the update (F8 safe)
+                }
+                // Stale placeholder is shorter than the streamed answer → skip.
                 return incomingBody.length < existingBody.length;
             },
 

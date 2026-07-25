@@ -127,3 +127,16 @@ export function linkMessagesToThread({ thread, messageIds, getMessage }) {
     }
     return added;
 }
+
+/**
+ * FIX-4d (TRACKER_2026-07-25_UI_RESEARCH.md §4) — accumulate a reasoning
+ * chunk onto the previous reasoning text. Pure string concatenation with a
+ * null-safe base; the caller (store service) performs the store insert.
+ *
+ * @param {String|undefined} existing previous ``body_json.reasoning`` text
+ * @param {String|undefined} chunk the new reasoning chunk
+ * @returns {String} the concatenated reasoning text
+ */
+export function accumulateReasoningText(existing, chunk) {
+    return (existing || "") + (chunk || "");
+}

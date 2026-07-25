@@ -1,3 +1,14 @@
+18.0.1.33.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FIX-4c: narrow staleness guard to placeholder pattern** —
+  ``_isStaleBodyUpdate`` now only skips incoming bodies that match the
+  "Thinking..." placeholder pattern, not ANY shorter body. The previous
+  "any shorter body" guard also skipped the legitimate final message
+  when ``_strip_preamble`` + linkify made it shorter than the streamed
+  body — silently defeating Phase-3 F8 (preamble strip).
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §12 V7.
+
 18.0.1.32.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
