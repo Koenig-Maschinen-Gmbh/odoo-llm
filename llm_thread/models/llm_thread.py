@@ -381,6 +381,24 @@ class LLMThread(models.Model):
 
         # No super() — suppress email/inbox/follower notifications.
         # But broadcast the new message via the WebSocket bus for live UI.
+
+        # FIX-4b (TRACKER_2026-07-25_UI_RESEARCH.md §4): skip the bus broadcast
+        # for streaming placeholders. The placeholder is posted with
+        # ``llm_streaming_placeholder=True`` context; its body is stale by the
+        # time the main transaction commits (the precommit payload is baked at
+        # post time but flushed at the final commit — AFTER all progressive
+        # chunk broadcasts). If we broadcast it here, the stale escaped
+        # placeholder overwrites the streamed answer at the end of the run.
+        # The orchestration bridge handles ``message_create`` itself (independent
+        # cursor, CURRENT body) so the placeholder still appears live — just
+        # without the stale end-of-run flush.
+        if self.env.context.get("llm_streaming_placeholder"):
+            _logger.debug(
+                "Skipping bus broadcast for streaming placeholder msg %s",
+                message.id if message else None,
+            )
+            return None
+
         try:
             # mail.record/insert — inserts message into the OWL store
             self._bus_send_store(message)
@@ -512,7 +530,12 @@ class LLMThread(models.Model):
         for chunk in stream:
             # Initialize message on first content
             if message is None and chunk.get("content"):
-                message = self.message_post(
+                # FIX-4b: suppress the placeholder's bus broadcast — see
+                # _notify_thread (llm_streaming_placeholder context key).
+                # Ref: TRACKER_2026-07-25_UI_RESEARCH.md §4.
+                message = self.with_context(
+                    llm_streaming_placeholder=True
+                ).message_post(
                     body=placeholder_text,
                     llm_role=llm_role,
                     author_id=False,

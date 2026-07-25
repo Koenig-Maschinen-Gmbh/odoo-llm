@@ -1763,7 +1763,18 @@ class LLMThread(models.Model):
 
             # Initialize message on first content
             if message is None and chunk.get("content"):
-                message = self.message_post(
+                # FIX-4b: post the placeholder with llm_streaming_placeholder=True
+                # so _notify_thread skips the bus broadcast. The placeholder's
+                # bus payload is baked at post time (precommit) but flushed at
+                # the final commit — AFTER all progressive chunk broadcasts.
+                # If broadcast here, the stale placeholder overwrites the
+                # streamed answer at the end of the run. The orchestration
+                # bridge handles message_create itself (independent cursor,
+                # CURRENT body) so the placeholder still appears live.
+                # Ref: TRACKER_2026-07-25_UI_RESEARCH.md §4.
+                message = self.with_context(
+                    llm_streaming_placeholder=True
+                ).message_post(
                     body="Thinking...",
                     llm_role="assistant",
                     author_id=False,

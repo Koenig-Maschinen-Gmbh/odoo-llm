@@ -1,3 +1,24 @@
+18.0.1.29.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FIX-4b: placeholder bus broadcast suppressed** — ``_notify_thread``
+  now skips ``_bus_send_store`` + ``_bus_send`` when the message was posted
+  with ``llm_streaming_placeholder=True`` context. Before the fix, the
+  placeholder's bus payload was baked at post time (precommit) but flushed at
+  the main transaction's final commit — AFTER all progressive chunk
+  broadcasts — so the stale escaped placeholder overwrote the streamed answer
+  at the end of a run. The orchestration bridge now handles ``message_create``
+  itself (independent cursor, CURRENT body). The direct-SSE path
+  (``message_post_from_stream``) also posts the placeholder with the context
+  key. Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
+* [FIX] **FIX-4c: browser staleness guard** — ``_isStaleBodyUpdate`` helper
+  in ``llm_store_service.js`` skips applying a body that is a strict
+  downgrade (shorter than the current rendered body while a stream/run is
+  active on that thread). Belt + suspenders alongside FIX-4b. Applied in
+  both the ``handleStreamMessage`` (SSE) and ``llm.thread/new_message`` (bus)
+  handlers. Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
 18.0.1.28.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

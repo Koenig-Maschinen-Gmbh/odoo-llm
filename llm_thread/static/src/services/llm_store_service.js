@@ -410,6 +410,40 @@ export const llmStoreService = {
                 delete this._transientStatusMsgIds[threadId];
             },
 
+            /**
+             * FIX-4c (TRACKER_2026-07-25_UI_RESEARCH.md §4): browser
+             * staleness guard. Returns true if the incoming message body is
+             * a strict downgrade — the incoming body is shorter than the
+             * current rendered body while a stream/run is active on that
+             * thread. This prevents the stale escaped "Thinking..." placeholder
+             * (flushed at the main transaction's final commit, AFTER all
+             * progressive chunk broadcasts) from overwriting the streamed
+             * answer at the end of a run. Belt + suspenders alongside FIX-4b
+             * (which suppresses the placeholder's bus broadcast at the source).
+             */
+            _isStaleBodyUpdate(threadId, incomingMsg) {
+                if (!incomingMsg || typeof incomingMsg.id !== "number") {
+                    return false;
+                }
+                const existing = mailStore.Message.get(incomingMsg.id);
+                if (!existing) {
+                    return false; // New message — always insert
+                }
+                const incomingBody = incomingMsg.body || "";
+                const existingBody = existing.body || "";
+                // Only guard when the thread is actively streaming or running.
+                const isActive =
+                    this.streamingThreads.has(threadId) ||
+                    this.getThreadRunState(threadId)?.state === "running";
+                if (!isActive) {
+                    return false;
+                }
+                // Strict downgrade: incoming body is shorter than what's
+                // already rendered. The placeholder ("Thinking...") is always
+                // shorter than the streamed answer, so it gets filtered out.
+                return incomingBody.length < existingBody.length;
+            },
+
             handleStreamMessage(threadId, data) {
                 switch (data.type) {
                     case "message_create": {
@@ -450,6 +484,11 @@ export const llmStoreService = {
 
                     case "message_chunk":
                     case "message_update":
+                        // FIX-4c: staleness guard — skip body downgrades
+                        // (stale placeholder overwriting streamed content).
+                        if (this._isStaleBodyUpdate(threadId, data.message)) {
+                            break;
+                        }
                         // Update existing message using standard mail.store.insert() like Odoo does
                         mailStore.insert({ "mail.message": [data.message] }, { html: true });
                         // P-UX Item 4: ensure the message is linked to the thread's
@@ -1404,11 +1443,23 @@ export const llmStoreService = {
             // The transient was inserted on ``orchestration_started`` and
             // is tracked in ``_transientStatusMsgIds``. No-op if none.
             llmStore._removeTransientStatusMessage(payload.id);
+            // FIX-4c: staleness guard — filter out stale body downgrades
+            // (the placeholder flushed at the main transaction's final commit
+            // would overwrite the streamed answer). Ref: TRACKER §4.
+            const threadId = payload.id;
+            const rawMessages = payload.data["mail.message"];
+            if (threadId && rawMessages?.length) {
+                const filtered = rawMessages.filter(
+                    (m) => !llmStore._isStaleBodyUpdate(threadId, m)
+                );
+                if (filtered.length < rawMessages.length) {
+                    payload.data = { ...payload.data, "mail.message": filtered };
+                }
+            }
             // Insert should always be done before any other operation (OCB
             // invariant: awaiting before insertion could overwrite newer
             // state from more recent notifications).
             mailStore.insert(payload.data, { html: true });
-            const threadId = payload.id;
             const messages = payload.data["mail.message"];
             if (!threadId || !messages?.length) {
                 return;

@@ -1,3 +1,15 @@
+18.0.1.24.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FIX-4b: streaming placeholder posted with
+  ``llm_streaming_placeholder=True`` context** — so the fork's
+  ``_notify_thread`` (llm_thread) skips the bus broadcast for the placeholder.
+  Before the fix, the placeholder's bus payload was baked at post time
+  (precommit) but flushed at the main transaction's final commit — AFTER all
+  progressive chunk broadcasts — so the stale placeholder overwrote the
+  streamed answer at the end of a run. The orchestration bridge now handles
+  ``message_create`` itself. Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
 18.0.1.23.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
