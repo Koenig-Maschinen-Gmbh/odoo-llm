@@ -974,6 +974,23 @@ class LLMThread(models.Model):
         """
         return [self._thread_store_dict(thread) for thread in self]
 
+    @api.model
+    def get_thread_store_data(self, thread_ids):
+        """Return the store dicts for the given thread IDs (FIX-3).
+
+        Called via RPC from the client ``createNewThread`` flow right after
+        ``create`` returns the new thread ID. The client inserts the result
+        into ``mailStore`` and calls ``selectThread`` immediately — no
+        dependence on the bus broadcast or a heavy ``init_messaging``
+        re-fetch (which under load takes 50+ seconds and yanks the active
+        thread; see TRACKER_2026-07-25_UI_RESEARCH.md §1 RC-1b + §3).
+
+        Returns ``{"mail.thread": [store_dict, ...]}`` ready for
+        ``mailStore.insert()``.
+        """
+        threads = self.browse(thread_ids).exists()
+        return {"mail.thread": threads._thread_to_store_data()}
+
     def get_thread_stats(self, thread_id=None):
         """Return cost/token/expert statistics for the P-HUD display.
 

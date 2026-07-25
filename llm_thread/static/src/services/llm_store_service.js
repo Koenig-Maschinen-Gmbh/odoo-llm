@@ -56,6 +56,16 @@ export const llmStoreService = {
             // exposes the API; it does NOT know the bus channel name).
             threadRunState: {},
 
+            // FIX-1 (TRACKER_2026-07-25_UI_RESEARCH.md §1 RC-1a): stable
+            // sidebar ordering. Pinned array of thread IDs (most-recent-first).
+            // Background write_date bumps (running threads) update tooltip/
+            // bucket only — NOT position. Only these events may change order:
+            //   (a) user creates/archives/deletes/tags a thread
+            //   (b) a genuinely NEW thread arrives (goes top)
+            //   (c) F5 / full reload (resets to write_date sort — natural on
+            //       page reload since JS state is wiped)
+            _threadOrderPin: null,
+
             // Computed properties - using mailStore as source of truth
             get activeLLMThread() {
                 // Check if current active thread in mail.store is an LLM thread
@@ -70,22 +80,46 @@ export const llmStoreService = {
             get llmThreadList() {
                 // Get all LLM threads from mailStore
                 const allThreads = Object.values(mailStore.Thread.records || {});
-                return allThreads
-                    .filter((thread) => thread.model === "llm.thread")
-                    .sort((a, b) => {
-                        // P-UX review §2.1: new Date("YYYY-MM-DD HH:MM:SS") is
-                        // implementation-defined (Safari → Invalid Date). Use luxon
-                        // deserializeDateTime for safe server-datetime parsing.
-                        const ts = (val) => {
-                            if (!val) {
-                                return 0;
-                            }
-                            const dt =
-                                val instanceof luxon.DateTime ? val : deserializeDateTime(val);
-                            return dt?.isValid ? dt.toMillis() : 0;
-                        };
-                        return ts(b.write_date) - ts(a.write_date);
-                    });
+                const llmThreads = allThreads.filter((thread) => thread.model === "llm.thread");
+
+                // FIX-1: stable ordering. Sort by write_date DESC (as before)
+                // but keep a pinned order for existing threads so background
+                // write_date bumps (running threads) don't reshuffle the sidebar.
+                const ts = (val) => {
+                    if (!val) {
+                        return 0;
+                    }
+                    // P-UX review §2.1: new Date("YYYY-MM-DD HH:MM:SS") is
+                    // implementation-defined (Safari → Invalid Date). Use luxon
+                    // deserializeDateTime for safe server-datetime parsing.
+                    const dt = val instanceof luxon.DateTime ? val : deserializeDateTime(val);
+                    return dt?.isValid ? dt.toMillis() : 0;
+                };
+
+                // Sort by write_date DESC to get the "natural" order.
+                const sorted = [...llmThreads].sort((a, b) => ts(b.write_date) - ts(a.write_date));
+
+                // Initialize or reconcile the pin with the current thread set.
+                // On first access (or after threads disappeared): rebuild the
+                // pin from the sorted order. This is the F5-equivalent — a
+                // fresh page load wipes JS state, so the pin starts null and
+                // is rebuilt here on first access.
+                const currentIds = new Set(llmThreads.map((t) => t.id));
+                if (!this._threadOrderPin) {
+                    this._threadOrderPin = sorted.map((t) => t.id);
+                } else {
+                    // Drop IDs no longer present; add new IDs at the front
+                    // (sorted by write_date among themselves).
+                    const pinSet = new Set(this._threadOrderPin);
+                    const newThreads = sorted.filter((t) => !pinSet.has(t.id));
+                    const knownIds = this._threadOrderPin.filter((id) => currentIds.has(id));
+                    this._threadOrderPin = [...newThreads.map((t) => t.id), ...knownIds];
+                }
+
+                // Build the result in pin order (stable), looking up each
+                // thread from the store.
+                const byId = new Map(llmThreads.map((t) => [t.id, t]));
+                return this._threadOrderPin.map((id) => byId.get(id)).filter((t) => t); // Drop any stale pin entries
             },
 
             // LLM-specific methods using standard fetchData approach
@@ -620,6 +654,11 @@ export const llmStoreService = {
 
             // Create new thread with default provider and model
             async createNewThread({ recordModel, recordId } = {}) {
+                // FIX-1 (RC-1b): capture the active thread BEFORE the create
+                // RPC. If the user switches to another thread while the RPC
+                // is in flight, we must NOT yank them back to the new thread.
+                const activeThreadAtClick = this.activeLLMThread;
+
                 // Get first available provider and model
                 const firstProvider = this.getFirstAvailableProvider();
                 const firstModel = this.getFirstAvailableModel();
@@ -660,10 +699,57 @@ export const llmStoreService = {
                     threadData.res_id = recordId;
                 }
 
-                const threadId = await orm.call("llm.thread", "create", [threadData]);
+                try {
+                    const threadId = await orm.call("llm.thread", "create", [threadData]);
 
-                // Reload user threads and select the new one
-                await this.refreshThreadsAndSelect(threadId);
+                    // FIX-3 (TRACKER_2026-07-25_UI_RESEARCH.md §3): deterministic
+                    // insert. Fetch the new thread's store dict from the server
+                    // (one lightweight RPC — NOT a full init_messaging) and
+                    // insert it into mailStore directly. The thread is now
+                    // visible + selectable regardless of bus delivery or
+                    // worker exhaustion.
+                    const storeData = await orm.call("llm.thread", "get_thread_store_data", [
+                        [threadId],
+                    ]);
+                    mailStore.insert(storeData);
+
+                    // FIX-1: pin the new thread at the top of the stable order.
+                    if (this._threadOrderPin) {
+                        this._threadOrderPin = [
+                            threadId,
+                            ...this._threadOrderPin.filter((id) => id !== threadId),
+                        ];
+                    }
+
+                    // FIX-1 (RC-1b): only auto-select the new thread if the
+                    // user hasn't manually switched threads since clicking +.
+                    // If they did switch, respect their choice — don't yank.
+                    const stillSameActive = this.activeLLMThread === activeThreadAtClick;
+                    if (stillSameActive) {
+                        await this.selectThread(threadId);
+                    }
+
+                    // Background reconciliation (non-blocking) — the bus
+                    // broadcast + init_messaging refresh other tabs and fill
+                    // in any store details the lightweight RPC didn't carry.
+                    // We do NOT await this — it must not block selection.
+                    mailStore
+                        .fetchData({ init_messaging: {} })
+                        .catch((err) =>
+                            console.debug(
+                                "Background init_messaging refresh after create failed:",
+                                err
+                            )
+                        );
+                } catch (error) {
+                    console.error("Failed to create conversation:", error);
+                    notification.add(
+                        _t(
+                            "Could not create the conversation. Please try again or contact your administrator."
+                        ),
+                        { type: "danger" }
+                    );
+                }
             },
 
             // Get first available provider
