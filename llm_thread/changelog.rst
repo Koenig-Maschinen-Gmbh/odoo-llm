@@ -1,3 +1,36 @@
+18.0.1.28.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FIX-4a: assistant ``message_post`` bodies wrapped in ``Markup``**
+  — the fork's ``message_post`` passed the ``str`` output of
+  ``_process_llm_body`` to OCB's ``mail.thread.message_post``, which calls
+  ``escape(str)`` on plain strings (mail_thread.py:2366). The escaped text
+  then got wrapped in ``<p>`` by the Html-field sanitizer, producing the
+  double-escaped ``<p>&lt;p&gt;Thinking...&lt;/p&gt;</p>`` the user saw
+  replacing streamed answers at the end of a run. Fix: wrap the renderer
+  output in ``Markup`` so OCB's ``escape`` is a no-op.
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
+* [ADD] **FIX-3: ``get_thread_store_data(ids)`` server method** — returns
+  the store dict for given thread IDs so the client can insert a
+  freshly-created thread deterministically. No dependence on the bus
+  broadcast or a heavy ``init_messaging`` re-fetch (which under load takes
+  50+ seconds). Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §3.
+
+* [FIX] **FIX-1: stable sidebar ordering** — ``llmThreadList`` getter now
+  uses a pinned-order map (``_threadOrderPin``) so background
+  ``write_date`` bumps (running threads) don't reshuffle the sidebar
+  mid-run. Only user actions (create/archive/delete/tag), new threads, and
+  F5 change position.
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §1 RC-1a.
+
+* [FIX] **FIX-1: no active-thread yank on create** — ``createNewThread``
+  captures the active thread before the create RPC and skips auto-select if
+  the user switched threads since clicking ``+``. Deterministic store insert
+  + immediate ``selectThread`` (no ``init_messaging`` blocking). Error
+  notification on failure (no more silent dead ``+`` button).
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §1 RC-1b + §3.
+
 18.0.1.27.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
