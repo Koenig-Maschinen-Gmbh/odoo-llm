@@ -1014,6 +1014,133 @@ class LLMThread(models.Model):
         threads = self.browse(thread_ids).exists()
         return {"mail.thread": threads._thread_to_store_data()}
 
+    def get_context_stats(self, thread_id=None):
+        """FIX-2 (TRACKER_2026-07-25_UI_RESEARCH.md §2): context usage stats
+        for the HUD. Returns the context window, last real prompt tokens,
+        and an estimated breakdown so the user can see how full the context
+        is and what it's used for (Kilo-Code-style context meter).
+
+        Called via RPC from the LLMThreadHud component alongside
+        ``get_thread_stats``. Gracefully degrades when ``koenig_ai_core``
+        (trace model, context window field, estimator) is not installed —
+        returns zeros so the HUD simply hides the context segment.
+
+        Public (no leading underscore) so it can be called remotely.
+
+        Args:
+            thread_id (int|list|None): The thread ID (may be wrapped in a
+                list by the RPC layer).
+
+        Returns:
+            dict: ``{context_window, reserved_output, last_prompt_tokens,
+            last_prompt_at, estimate: {system, tools, summary, window_msgs,
+            window_tokens, total}}``. ``last_prompt_tokens`` is the ONLY
+            truthful number for "how full is the context right now" — the
+            estimate breakdown is labeled "~" in the UI.
+        """
+        if thread_id is not None:
+            if isinstance(thread_id, (list, tuple)):
+                thread_id = thread_id[0] if thread_id else None
+            thread = self.browse(thread_id) if thread_id else self
+        else:
+            thread = self
+        thread = thread.sudo()
+        thread.ensure_one()
+
+        # Context window + reserved output from the model record (added by
+        # koenig_ai_core — may be absent if koenig_ai_core is not installed).
+        context_window = 0
+        reserved_output = 0
+        if thread.model_id:
+            context_window = getattr(
+                thread.model_id, "koenig_context_window", 0
+            ) or 0
+            reserved_output = getattr(
+                thread.model_id, "koenig_max_output_tokens", 0
+            ) or 0
+
+        # Last real prompt tokens from the trace model (koenig.ai.llm.trace
+        # in koenig_ai_core). This is the headline number — real usage_input
+        # from the latest LLM call, not an estimate.
+        last_prompt_tokens = 0
+        last_prompt_at = None
+        Trace = thread.env.get("koenig.ai.llm.trace")
+        if Trace is not None:
+            try:
+                trace = Trace.sudo()._current_for_thread(thread.id)
+                if trace:
+                    last_prompt_tokens = trace.usage_input or 0
+                    last_prompt_at = trace.create_date
+            except Exception:
+                _logger.debug(
+                    "get_context_stats: trace lookup failed", exc_info=True
+                )
+
+        # Estimated breakdown (labeled "~" in the UI — chars/4 underestimates
+        # ~2x vs real usage_input, so categories are indicative only).
+        estimate = {
+            "system": 0,
+            "tools": 0,
+            "summary": 0,
+            "window_msgs": 0,
+            "window_tokens": 0,
+            "total": 0,
+        }
+        try:
+            # System + prepend messages.
+            provider = thread.provider_id
+            est_tokens = getattr(provider, "_koenig_estimate_message_tokens", None)
+            if est_tokens:
+                # System/prompt tokens.
+                prompt_text = ""
+                if thread.assistant_id and thread.assistant_id.prompt_id:
+                    prompt_text = thread.assistant_id.prompt_id.content or ""
+                if prompt_text:
+                    estimate["system"] = est_tokens(
+                        [{"role": "system", "content": prompt_text}], {}
+                    )
+                # Message window tokens.
+                messages = thread.message_ids.filtered(
+                    lambda m: not m.is_error
+                    and m.llm_role in ("user", "assistant", "tool")
+                ).sorted("id")[-25:]
+                estimate["window_msgs"] = len(messages)
+                estimate["window_tokens"] = est_tokens(messages, {})
+                # Summary tokens (if llm_summary exists).
+                summary = getattr(thread, "llm_summary", False)
+                if summary:
+                    estimate["summary"] = est_tokens(
+                        [{"role": "system", "content": summary}], {}
+                    )
+                # Tools schema tokens.
+                tools = thread.tool_ids if hasattr(thread, "tool_ids") else None
+                if tools:
+                    tool_chars = sum(
+                        len(t.get_tool_definition().get("function", {}).get("description", "") or "")
+                        + len(str(t.get_tool_definition().get("function", {}).get("parameters", {})))
+                        for t in tools
+                        if hasattr(t, "get_tool_definition")
+                    )
+                    estimate["tools"] = max(1, tool_chars // 4)
+                estimate["total"] = (
+                    estimate["system"]
+                    + estimate["tools"]
+                    + estimate["summary"]
+                    + estimate["window_tokens"]
+                )
+        except Exception:
+            _logger.debug(
+                "get_context_stats: estimate breakdown failed", exc_info=True
+            )
+
+        return {
+            "context_window": context_window,
+            "reserved_output": reserved_output,
+            "last_prompt_tokens": last_prompt_tokens,
+            "last_prompt_at": last_prompt_at,
+            "estimate": estimate,
+        }
+
     def get_thread_stats(self, thread_id=None):
         """Return cost/token/expert statistics for the P-HUD display.
 

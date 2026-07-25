@@ -84,6 +84,69 @@
                 <i class="fa fa-coins me-1" />
                 <t t-out="tokensLabel" /> tokens
             </span>
+            <!-- FIX-2 — context usage meter (Kilo-Code-style ring + popover) -->
+            <span
+                t-if="contextData"
+                class="o-llm-hud-context position-relative"
+                t-on-click="() => this._toggleContextPopover()"
+                role="button"
+                title="Context usage — click for breakdown"
+            >
+                <i
+                    class="fa fa-circle-o me-1"
+                    t-att-class="{
+                        'text-success': contextData.level === 'ok',
+                        'text-warning': contextData.level === 'warning',
+                        'text-danger': contextData.level === 'danger',
+                    }"
+                />
+                <t t-out="contextLabel" />
+                <div
+                    t-if="state.contextPopoverOpen"
+                    class="o-llm-context-popover position-absolute bottom-100 start-0 mb-1 p-2 bg-white border rounded shadow-sm small"
+                    style="min-width: 240px; z-index: 1060;"
+                >
+                    <div class="fw-bold mb-1">Context usage</div>
+                    <div class="d-flex justify-content-between">
+                        <span>Used</span>
+                        <span><t t-out="contextData.used.toLocaleString()" /> tokens</span>
+                    </div>
+                    <div class="d-flex justify-content-between" t-if="contextData.reserved">
+                        <span>Reserved (output)</span>
+                        <span><t t-out="contextData.reserved.toLocaleString()" /> tokens</span>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span>Available</span>
+                        <span><t t-out="contextData.available.toLocaleString()" /> tokens</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-top mt-1 pt-1">
+                        <span>Window</span>
+                        <span><t t-out="contextData.window.toLocaleString()" /> tokens</span>
+                    </div>
+                    <div
+                        t-if="contextData.estimate.total"
+                        class="border-top mt-1 pt-1 text-muted"
+                    >
+                        <div class="fw-bold small">~ Estimated breakdown</div>
+                        <div class="d-flex justify-content-between" t-if="contextData.estimate.system">
+                            <span>System + prompt</span>
+                            <span>~<t t-out="contextData.estimate.system.toLocaleString()" /></span>
+                        </div>
+                        <div class="d-flex justify-content-between" t-if="contextData.estimate.tools">
+                            <span>Tools schema</span>
+                            <span>~<t t-out="contextData.estimate.tools.toLocaleString()" /></span>
+                        </div>
+                        <div class="d-flex justify-content-between" t-if="contextData.estimate.window_tokens">
+                            <span>Message window (<t t-out="contextData.estimate.window_msgs" /> msgs)</span>
+                            <span>~<t t-out="contextData.estimate.window_tokens.toLocaleString()" /></span>
+                        </div>
+                        <div class="d-flex justify-content-between" t-if="contextData.estimate.summary">
+                            <span>Summary</span>
+                            <span>~<t t-out="contextData.estimate.summary.toLocaleString()" /></span>
+                        </div>
+                    </div>
+                </div>
+            </span>
             <span t-if="costLabel">
                 <i class="fa fa-eur me-1" />
                 <t t-out="costLabel" />

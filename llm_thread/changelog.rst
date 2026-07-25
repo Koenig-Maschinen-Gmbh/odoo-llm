@@ -1,3 +1,17 @@
+18.0.1.31.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **FIX-2: context usage HUD (Kilo-Code-style)** — new
+  ``get_context_stats(thread_id)`` server method returns the context window,
+  last real prompt tokens (from ``koenig.ai.llm.trace.usage_input``), and an
+  estimated breakdown (system/prompt, tools schema, summary, message window).
+  The HUD component now displays a context ring/bar + percentage
+  (``24.3k / 256k (9%)``) next to the existing tokens/cost, with a click
+  popover showing the breakdown. Thresholds: green <70%, warning 70-90%,
+  danger ≥90%. Gracefully degrades when ``koenig_ai_core`` is not installed
+  (returns zeros → HUD hides the context segment).
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §2.
+
 18.0.1.30.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -4,8 +4,8 @@ import {
     Component,
     onMounted,
     onWillStart,
-    onWillUpdateProps,
     onWillUnmount,
+    onWillUpdateProps,
     status,
     useState,
 } from "@odoo/owl";
@@ -46,6 +46,9 @@ export class LLMThreadHud extends Component {
         this.llmStore = useState(useService("llm.store"));
         this.state = useState({
             stats: null,
+            // FIX-2: context usage stats (ring + popover breakdown).
+            contextStats: null,
+            contextPopoverOpen: false,
             loading: false,
             // UI-09 H2 — tick to force re-evaluation of the 30s auto-dismiss.
             // The store's ``getRunSummary`` checks elapsed time, but without
@@ -135,6 +138,19 @@ export class LLMThreadHud extends Component {
                 return;
             }
             this.state.stats = stats;
+            // FIX-2: fetch context stats alongside the spend stats (single
+            // mount/switch — not on every re-render). Graceful: if the
+            // endpoint returns zeros (koenig_ai_core not installed), the
+            // context segment simply hides.
+            try {
+                const ctxStats = await this.orm.call("llm.thread", "get_context_stats", [threadId]);
+                if (status(this) === "destroyed" || this.props.threadId !== threadId) {
+                    return;
+                }
+                this.state.contextStats = ctxStats;
+            } catch {
+                this.state.contextStats = null;
+            }
         } catch {
             if (status(this) === "destroyed") {
                 return;
@@ -184,6 +200,52 @@ export class LLMThreadHud extends Component {
             return `${(s.tokens / 1000).toFixed(1)}k`;
         }
         return String(s.tokens);
+    }
+
+    // ------------------------------------------------------------------
+    // FIX-2 — context usage meter (Kilo-Code-style)
+    // ------------------------------------------------------------------
+
+    /**
+     * Returns the context usage data for the ring/bar, or null when no
+     * context stats are available (koenig_ai_core not installed or no
+     * trace yet). The headline number is ``last_prompt_tokens`` (real
+     * usage_input from the latest LLM call), NOT the estimate total.
+     */
+    get contextData() {
+        const c = this.state.contextStats;
+        if (!c || !c.context_window || !c.last_prompt_tokens) {
+            return null;
+        }
+        const used = c.last_prompt_tokens;
+        const window = c.context_window;
+        const reserved = c.reserved_output || 0;
+        const available = Math.max(0, window - used - reserved);
+        const pct = window > 0 ? Math.round((used / window) * 100) : 0;
+        return {
+            used,
+            window,
+            reserved,
+            available,
+            pct,
+            // Thresholds for coloring (Kilo-Code convention).
+            level: pct >= 90 ? "danger" : pct >= 70 ? "warning" : "ok",
+            estimate: c.estimate || {},
+            lastPromptAt: c.last_prompt_at,
+        };
+    }
+
+    get contextLabel() {
+        const d = this.contextData;
+        if (!d) {
+            return "";
+        }
+        const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+        return `${fmt(d.used)} / ${fmt(d.window)} (${d.pct}%)`;
+    }
+
+    _toggleContextPopover() {
+        this.state.contextPopoverOpen = !this.state.contextPopoverOpen;
     }
 
     // ------------------------------------------------------------------
