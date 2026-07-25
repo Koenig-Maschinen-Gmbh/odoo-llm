@@ -1072,6 +1072,10 @@ export const llmStoreService = {
                             // UI-12 — surface the failure in the HUD error counter.
                             errorCount: (current.errorCount || 0) + 1,
                         });
+                        // FIX-4g: clean up the transient "Analyzing…" status
+                        // line + stop streaming — the run is terminal.
+                        this._removeTransientStatusMessage(threadId);
+                        this.stopStreaming(threadId);
                         this.reloadThreadMessages(threadId);
                         break;
                     case "run_cancelled":
@@ -1083,6 +1087,9 @@ export const llmStoreService = {
                             run_id: runId,
                             expertsRunning: 0,
                         });
+                        // FIX-4g: clean up transient + stop streaming.
+                        this._removeTransientStatusMessage(threadId);
+                        this.stopStreaming(threadId);
                         this.reloadThreadMessages(threadId);
                         break;
                     case "run_killed":
@@ -1094,6 +1101,11 @@ export const llmStoreService = {
                             run_id: runId,
                             expertsRunning: 0,
                         });
+                        // FIX-4g: clean up transient + stop streaming — the
+                        // run was killed (dead-worker guard / service restart)
+                        // and the "Analyzing your request…" line must not linger.
+                        this._removeTransientStatusMessage(threadId);
+                        this.stopStreaming(threadId);
                         this.reloadThreadMessages(threadId);
                         break;
                     case "run_timed_out":
@@ -1105,6 +1117,9 @@ export const llmStoreService = {
                             run_id: runId,
                             expertsRunning: 0,
                         });
+                        // FIX-4g: clean up transient + stop streaming.
+                        this._removeTransientStatusMessage(threadId);
+                        this.stopStreaming(threadId);
                         this.reloadThreadMessages(threadId);
                         break;
                     case "run_paused":

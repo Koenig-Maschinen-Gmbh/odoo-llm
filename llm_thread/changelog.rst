@@ -1,3 +1,15 @@
+18.0.1.30.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FIX-4g: killed-run transient cleanup** — all terminal run events
+  (``run_failed``, ``run_cancelled``, ``run_killed``, ``run_timed_out``) in
+  ``llm_store_service.js`` now call ``_removeTransientStatusMessage`` +
+  ``stopStreaming`` so the "Analyzing your request…" line and stale SSE
+  connections are cleaned up immediately. Before the fix, a killed run
+  (dead-worker guard / service restart) left the transient status lingering
+  in the sidebar + HUD showing "Killed" with no answer cleanup.
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
 18.0.1.29.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
