@@ -1,3 +1,18 @@
+18.0.1.23.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **429 (rate_limit) gets a configurable backoff base**
+  (Item 5-residual).  The general ``backoff_base`` (default 1.0s) is used for
+  all transient errors, but 429 "INSUFFICIENT QUOTA" errors need more time
+  for the per-minute token quota to reset.  New ICP
+  ``llm_assistant.backoff_base_rate_limit`` (default = ``backoff_base`` —
+  backward compatible) gives 429s a potentially longer exponential backoff
+  (e.g., 2.0s base → 2s, 4s, 8s instead of 1s, 2s, 4s).  Observed on
+  intranettest: Scaleway glm-5.2 retried 3× within the same second on
+  per-minute quota exhaustion — all hit the same rate limit.  Operators can
+  set ``backoff_base_rate_limit`` to 2.0+ to give the quota time to reset
+  before retrying.
+
 18.0.1.22.0 (2026-07-24)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

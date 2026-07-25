@@ -1021,6 +1021,21 @@ class LLMThread(models.Model):
                 1.0,
             )
         )
+        # Phase-3 Item 5-residual (2026-07-25): 429 (rate_limit) gets a
+        # potentially longer backoff base — the per-minute token quota needs
+        # time to reset, and the default 1s base is too short for some
+        # providers (observed: Scaleway glm-5.2 INSUFFICIENT QUOTA retried
+        # 3× within the same second → all hit the same rate limit). Default
+        # is the same as the general backoff_base (backward compatible);
+        # operators can set it to 2.0+ to give the quota more time.
+        backoff_base_rate_limit = float(
+            self.env["ir.config_parameter"]
+            .sudo()
+            .get_param(
+                "llm_assistant.backoff_base_rate_limit",
+                backoff_base,
+            )
+        )
 
         # RES-01: the model chain for this turn — primary + ONE fallback hop
         # (empty hook in the base fork = chain of 1, unchanged behavior).
@@ -1088,7 +1103,16 @@ class LLMThread(models.Model):
                     self._finalize_llm_trace(request_trace, sink, "error", exc)
                     if self._is_transient_llm_error(exc):
                         if attempt < max_retries - 1:
-                            wait = backoff_base * (2**attempt)
+                            # Phase-3 Item 5-residual: use the rate-limit-
+                            # specific backoff base for 429 errors — the
+                            # per-minute token quota needs time to reset.
+                            err_cat = self._classify_llm_error(exc)
+                            base = (
+                                backoff_base_rate_limit
+                                if err_cat == LLM_ERR_RATE_LIMIT
+                                else backoff_base
+                            )
+                            wait = base * (2**attempt)
                             _logger.warning(
                                 "LLM API transient error (attempt %d/%d): %s — retrying in %ss",
                                 attempt + 1,
