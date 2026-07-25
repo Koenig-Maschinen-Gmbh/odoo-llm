@@ -2,7 +2,14 @@
 
 import { llmStoreService } from "../src/services/llm_store_service";
 import { accumulateReasoningText } from "../src/utils/llm_thread_messages";
+import { translatedTerms, translationLoaded } from "@web/core/l10n/translation";
 import { beforeEach, describe, expect, test } from "@odoo/hoot";
+
+// Hoot does not load the translation cache — ``_t(str)`` would return a
+// LazyTranslatedString whose coercion throws "translation error" (OCB
+// translation.js:36-62). Mark translations as loaded so ``_t`` returns the
+// English term (idempotent one-off setup; matches the production env).
+translatedTerms[translationLoaded] = true;
 
 /**
  * FIX-4c/4d/4g (TRACKER_2026-07-25_UI_RESEARCH.md) — handler-level tests for

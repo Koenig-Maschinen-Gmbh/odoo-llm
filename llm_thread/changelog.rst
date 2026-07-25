@@ -1,6 +1,25 @@
 18.0.1.33.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+* [ADD] **FIX-4d: reasoning display component (UI side)** — assistant
+  messages with accumulated ``body_json.reasoning`` now render a collapsible
+  "Thinking" block above the answer body (Kilo-Code pattern). The block
+  auto-opens while the message is the store's active reasoning target and
+  auto-collapses at run end; a summary click pins a manual override. The
+  new ``_accumulateReasoning`` store method is shared by the bus subscriber
+  (orchestration path) and the NEW ``reasoning_chunk`` case in
+  ``handleStreamMessage`` — the direct-SSE path silently dropped reasoning
+  events before. Clearing is thread-scoped (``_clearActiveReasoning``) so a
+  parallel thread's active "Thinking" block is untouched.
+  Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+* [ADD] **FIX-4c/4d/4g: Hoot handler-level test suite** — new
+  ``llm_store_handlers.test.js`` (14 tests) covers the staleness guard
+  (placeholder skipped while a run is active, legacy double-escaped variant,
+  V7 regression: the shorter legit final body IS applied), killed/failed-run
+  transient-status cleanup, and reasoning accumulation with the
+  active-target lifecycle. Uses a mock-mailStore harness; translations are
+  marked loaded so ``_t`` code paths don't throw the Hoot lazy-translation
+  error.
 * [FIX] **FIX-4c: narrow staleness guard to placeholder pattern** —
   ``_isStaleBodyUpdate`` now only skips incoming bodies that match the
   "Thinking..." placeholder pattern, not ANY shorter body. The previous
