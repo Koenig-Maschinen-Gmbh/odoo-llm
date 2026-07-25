@@ -304,6 +304,26 @@ export const llmStoreService = {
                     this.eventSources.delete(threadId);
                 }
                 this.streamingThreads.delete(threadId);
+                this._clearActiveReasoning(threadId);
+            },
+
+            /**
+             * FIX-4d: clear the active reasoning target when its thread's
+             * stream/run ends so the "Thinking" block auto-collapses. Only
+             * clears when the tracked message belongs to ``threadId`` (or is
+             * gone) — a parallel thread's active reasoning is untouched.
+             */
+            _clearActiveReasoning(threadId) {
+                if (
+                    this.activeReasoningMessageId === null ||
+                    this.activeReasoningMessageId === undefined
+                ) {
+                    return;
+                }
+                const msg = mailStore.Message.get(this.activeReasoningMessageId);
+                if (!msg || msg.res_id === threadId) {
+                    this.activeReasoningMessageId = null;
+                }
             },
 
             /**
@@ -571,6 +591,13 @@ export const llmStoreService = {
                                 updThread.messages.add(updMsg);
                             }
                         }
+                        break;
+
+                    case "reasoning_chunk":
+                        // FIX-4d: direct-SSE path — accumulate reasoning on
+                        // the streaming message (same handling as the bus
+                        // subscriber on the orchestration path).
+                        this._accumulateReasoning(data.message?.id, data.reasoning);
                         break;
 
                     case "thread_update":
@@ -1119,6 +1146,9 @@ export const llmStoreService = {
                                 shownAt: Date.now(),
                             },
                         });
+                        // FIX-4d: the run ended — collapse the "Thinking"
+                        // block (clear the active reasoning target).
+                        this._clearActiveReasoning(threadId);
                         this.reloadThreadMessages(threadId);
                         break;
                     }
@@ -1592,21 +1622,7 @@ export const llmStoreService = {
             if (!payload || typeof payload.message_id !== "number") {
                 return;
             }
-            const msg = mailStore.Message.get(payload.message_id);
-            if (!msg) {
-                return;
-            }
-            // Accumulate reasoning text on the message record.
-            const existing = msg.body_json?.reasoning || "";
-            const updated = existing + (payload.reasoning || "");
-            mailStore.insert({
-                "mail.message": [
-                    {
-                        id: payload.message_id,
-                        body_json: { reasoning: updated },
-                    },
-                ],
-            });
+            llmStore._accumulateReasoning(payload.message_id, payload.reasoning);
         });
 
         // Initialize LLM data after mailStore is ready (which calls init_messaging)
