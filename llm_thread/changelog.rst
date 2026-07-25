@@ -1,4 +1,4 @@
-18.0.1.33.0 (2026-07-25)
+18.0.1.34.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * [ADD] **FIX-4d: reasoning display component (UI side)** — assistant
@@ -20,6 +20,10 @@
   active-target lifecycle. Uses a mock-mailStore harness; translations are
   marked loaded so ``_t`` code paths don't throw the Hoot lazy-translation
   error.
+
+18.0.1.33.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 * [FIX] **FIX-4c: narrow staleness guard to placeholder pattern** —
   ``_isStaleBodyUpdate`` now only skips incoming bodies that match the
   "Thinking..." placeholder pattern, not ANY shorter body. The previous
