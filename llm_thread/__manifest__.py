@@ -126,6 +126,10 @@ Contact: support@apexive.com
             # + Hoot suite. The util is bundled here too (assets_unit_tests is isolated).
             "llm_thread/static/src/utils/llm_phase.js",
             "llm_thread/static/tests/llm_phase.test.js",
+            # FIX-4c/4d/4g — handler-level Hoot suite for the store service's
+            # bus/SSE handlers (mock mailStore harness; the service itself is
+            # loaded via web.assets_backend on the test page).
+            "llm_thread/static/tests/llm_store_handlers.test.js",
         ],
     },
     "images": [

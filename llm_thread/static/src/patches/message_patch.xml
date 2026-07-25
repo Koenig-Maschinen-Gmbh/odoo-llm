@@ -6,6 +6,34 @@
     t-inherit="mail.Message"
     t-inherit-mode="extension"
   >
+        <!-- FIX-4d — collapsible reasoning ("Thinking") block, rendered
+             ABOVE the answer body (Kilo-Code pattern). Only assistant
+             messages with accumulated body_json.reasoning show it. The
+             block auto-opens while the message is the store's active
+             reasoning target and auto-collapses at run end; a summary
+             click pins a manual override. -->
+        <xpath
+      expr="//div[hasclass('o-mail-Message-textContent')]"
+      position="before"
+    >
+            <t t-if="hasReasoning">
+                <details
+          class="o-llm-reasoning small mb-1"
+          t-att-class="{'o-llm-reasoning-streaming': isReasoningStreaming}"
+          t-att-open="isReasoningOpen"
+        >
+                    <summary
+            class="o-llm-reasoning-summary text-muted"
+            t-on-click="onReasoningSummaryClick"
+          >
+                        <i class="fa fa-lightbulb-o me-1" aria-hidden="true" />
+                        <t t-esc="reasoningLabel" />
+                    </summary>
+                    <div class="o-llm-reasoning-body text-muted" t-out="reasoningText" />
+                </details>
+            </t>
+        </xpath>
+
         <!-- Add LLM-specific content after the main message content -->
         <xpath
       expr="//div[hasclass('o-mail-Message-content')]"

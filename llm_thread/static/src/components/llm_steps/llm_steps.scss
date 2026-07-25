@@ -103,4 +103,69 @@
             padding-left: 0.5rem;
         }
     }
+
+    // --- FIX-4d — collapsible reasoning ("Thinking") block -----------------
+    // Rendered above the answer body for assistant messages with accumulated
+    // reasoning. Dimmed, left-railed, smaller — reads as supporting context,
+    // not as part of the answer (Kilo-Code/Claude-Code pattern).
+    .o-llm-reasoning {
+        border-left: 2px solid var(--bs-border-color, #dee2e6);
+        padding-left: 0.5rem;
+
+        .o-llm-reasoning-summary {
+            cursor: pointer;
+            font-size: 0.8125rem;
+            user-select: none;
+            list-style: none;
+
+            &:hover {
+                color: #714b67;
+            }
+
+            // Native <summary> renders a disclosure triangle; keep it subtle.
+            &::before {
+                content: "▸";
+                display: inline-block;
+                margin-right: 0.25rem;
+                transition: transform 0.12s ease-in-out;
+            }
+        }
+
+        &[open] > .o-llm-reasoning-summary::before {
+            transform: rotate(90deg);
+        }
+
+        .o-llm-reasoning-body {
+            white-space: pre-wrap;
+            font-size: 0.8125rem;
+            font-style: italic;
+            opacity: 0.85;
+            margin-top: 0.25rem;
+            max-height: 20rem;
+            overflow-y: auto;
+        }
+
+        // Subtle pulse on the summary while reasoning is streaming in.
+        &.o-llm-reasoning-streaming > .o-llm-reasoning-summary {
+            animation: o-llm-reasoning-pulse 1.6s ease-in-out infinite;
+        }
+    }
+
+    @keyframes o-llm-reasoning-pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.55;
+        }
+    }
+
+    // Collapsed steps hide the reasoning block together with the step body
+    // (the block is a sibling of o-mail-Message-textContent, not inside it).
+    &.o-llm-step.o-llm-step-collapsed {
+        .o-llm-reasoning {
+            display: none !important;
+        }
+    }
 }

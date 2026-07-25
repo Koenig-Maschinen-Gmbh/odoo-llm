@@ -61,6 +61,12 @@ patch(Message.prototype, {
         // the assistant copy button reads it.
         this.llmCopyState = useState({ copied: false });
 
+        // FIX-4d: reasoning ("Thinking") block collapse state. manualOpen
+        // starts null = auto (open while this message is the active
+        // reasoning target, collapsed otherwise); a summary click pins a
+        // manual override that survives re-renders and stream end.
+        this.llmReasoningState = useState({ manualOpen: null });
+
         // P-CHAT M2: llm store for the per-turn steps-drawer collapse state
         // and (M3) the run-feedback state. Wrapped in useState so reads of
         // stepDrawerOpen / threadRunState in this component's getters are
@@ -118,6 +124,67 @@ patch(Message.prototype, {
      */
     get copiedLabel() {
         return this.llmCopyState.copied ? _t("Copied") : _t("Copy");
+    },
+
+    // ------------------------------------------------------------------------
+    // FIX-4d — collapsible reasoning ("Thinking") block above the answer.
+    // The llm store accumulates reasoning chunks on body_json.reasoning
+    // (bus path: llm.thread/reasoning_chunk; SSE path: reasoning_chunk).
+    // ------------------------------------------------------------------------
+
+    /** Whether this message carries reasoning text to render. */
+    get hasReasoning() {
+        return (
+            this.isLLMMessage &&
+            this.llmRole === "assistant" &&
+            Boolean(this.props.message?.body_json?.reasoning?.length)
+        );
+    },
+
+    /** The accumulated reasoning text (plain text, escaped by t-out). */
+    get reasoningText() {
+        return this.props.message?.body_json?.reasoning || "";
+    },
+
+    /**
+     * True while this message is the store's active reasoning target — the
+     * block auto-opens so the user watches the "Thinking" live, and
+     * auto-collapses when the run/stream ends (the store clears the target).
+     */
+    get isReasoningStreaming() {
+        if (!this.hasReasoning || !this.llmStore) {
+            return false;
+        }
+        return this.llmStore.activeReasoningMessageId === this.props.message?.id;
+    },
+
+    /**
+     * Whether the reasoning <details> is open. Auto: open while streaming,
+     * collapsed otherwise. A summary click pins a manual override (sticky
+     * across re-renders and across stream end).
+     */
+    get isReasoningOpen() {
+        if (this.llmReasoningState.manualOpen !== null) {
+            return this.llmReasoningState.manualOpen;
+        }
+        return this.isReasoningStreaming;
+    },
+
+    /** Summary label — "Thinking…" while streaming, "Thought process" after. */
+    get reasoningLabel() {
+        return this.isReasoningStreaming ? _t("Thinking…") : _t("Thought process");
+    },
+
+    /**
+     * Pin a manual open/close override. The native <details> toggles itself
+     * on summary click; we record the flipped state BEFORE the toggle so the
+     * next OWL render (which sets t-att-open from isReasoningOpen) keeps the
+     * user's choice. Reading ``open`` from the toggle event is NOT usable
+     * here: programmatic open-attribute changes also fire ``toggle``, so the
+     * auto/streaming transitions would clobber the manual state.
+     */
+    onReasoningSummaryClick() {
+        this.llmReasoningState.manualOpen = !this.isReasoningOpen;
     },
 
     /**
