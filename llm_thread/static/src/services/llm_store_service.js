@@ -455,10 +455,7 @@ export const llmStoreService = {
                 if (!msg) {
                     return;
                 }
-                const updated = accumulateReasoningText(
-                    msg.body_json?.reasoning,
-                    reasoningText
-                );
+                const updated = accumulateReasoningText(msg.body_json?.reasoning, reasoningText);
                 mailStore.insert({
                     "mail.message": [
                         {
