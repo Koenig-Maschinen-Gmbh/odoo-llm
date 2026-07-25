@@ -1813,12 +1813,23 @@ class LLMThread(models.Model):
 
             # TEL-01: count reasoning chunks (they carry no content/tool_calls
             # keys, so they fall through the above checks — count them here).
-            if chunk.get("reasoning") and trace_sink is not None:
-                try:
-                    trace_sink["chunks"]["reasoning"] += 1
-                    trace_sink["reasoning_length"] += len(chunk["reasoning"])
-                except Exception:  # noqa: BLE001 — telemetry must never raise
-                    _logger.debug("trace_sink reasoning fill failed", exc_info=True)
+            # FIX-4d (2026-07-25): forward reasoning chunks as a
+            # ``reasoning_chunk`` event so the orchestration bridge can
+            # relay them to the UI (Kilo-Code-style "Thinking" section).
+            # Ref: TRACKER_2026-07-25_UI_RESEARCH.md §4.
+            if chunk.get("reasoning"):
+                if trace_sink is not None:
+                    try:
+                        trace_sink["chunks"]["reasoning"] += 1
+                        trace_sink["reasoning_length"] += len(chunk["reasoning"])
+                    except Exception:  # noqa: BLE001 — telemetry must never raise
+                        _logger.debug("trace_sink reasoning fill failed", exc_info=True)
+                if message is not None:
+                    yield {
+                        "type": "reasoning_chunk",
+                        "message": message.to_store_format(),
+                        "reasoning": chunk["reasoning"],
+                    }
 
             # Handle errors
             if chunk.get("error"):

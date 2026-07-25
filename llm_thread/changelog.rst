@@ -1,3 +1,12 @@
+18.0.1.32.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **FIX-4d: reasoning chunk bus subscription (JS side)** —
+  ``llm_store_service.js`` now subscribes to the ``llm.thread/reasoning_chunk``
+  bus event and accumulates reasoning text on the message's ``body_json.reasoning``
+  field. The UI can render a collapsible "Thinking" section above the answer
+  (Kilo-Code pattern). Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
 18.0.1.31.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

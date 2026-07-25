@@ -1523,6 +1523,31 @@ export const llmStoreService = {
             }
         });
 
+        // FIX-4d: subscribe to reasoning_chunk bus events (Kilo-Code-style
+        // "Thinking" section). The bridge forwards reasoning chunks on the
+        // independent cursor; here we accumulate the text on the message's
+        // body_json.reasoning field for the UI to render.
+        bus_service.subscribe("llm.thread/reasoning_chunk", (payload) => {
+            if (!payload || typeof payload.message_id !== "number") {
+                return;
+            }
+            const msg = mailStore.Message.get(payload.message_id);
+            if (!msg) {
+                return;
+            }
+            // Accumulate reasoning text on the message record.
+            const existing = msg.body_json?.reasoning || "";
+            const updated = existing + (payload.reasoning || "");
+            mailStore.insert({
+                "mail.message": [
+                    {
+                        id: payload.message_id,
+                        body_json: { reasoning: updated },
+                    },
+                ],
+            });
+        });
+
         // Initialize LLM data after mailStore is ready (which calls init_messaging)
         mailStore.isReady.then(() => {
             llmStore.initialize();

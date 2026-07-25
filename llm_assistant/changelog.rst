@@ -1,3 +1,15 @@
+18.0.1.25.0 (2026-07-25)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **FIX-4d: reasoning chunks forwarded as ``reasoning_chunk`` events** —
+  the stream processing loop (``_stream_post_process_chunks``) now yields
+  ``{"type": "reasoning_chunk", "message": ..., "reasoning": text}`` events
+  when reasoning content arrives. Previously reasoning was only counted into
+  trace telemetry (``trace_sink.chunks.reasoning``) and dropped entirely —
+  no reasoning reached the UI. The orchestration bridge forwards the events
+  on the independent cursor so the browser renders a collapsible "Thinking"
+  section (Kilo-Code pattern). Ref: ``TRACKER_2026-07-25_UI_RESEARCH.md`` §4.
+
 18.0.1.24.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
