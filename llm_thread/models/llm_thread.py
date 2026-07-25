@@ -313,10 +313,17 @@ class LLMThread(models.Model):
                 llm_role,
             )
 
-        # Convert markdown to HTML if needed (only for assistant messages)
-        # User messages should be plain text, tool messages use body_json
+        # Convert markdown to HTML if needed (only for assistant messages).
+        # User messages should be plain text, tool messages use body_json.
+        # Wrap in Markup so OCB's mail.thread.message_post (mail_thread.py:2366)
+        # does NOT escape the HTML we just produced — passing a plain ``str``
+        # body would yield ``<p>&lt;p&gt;Thinking...&lt;/p&gt;</p>`` (double
+        # escape, since ``escape(str)`` + sanitize wraps the escaped text in
+        # ``<p>``).  ``_process_llm_body`` already skips ``Markup`` input, so
+        # wrapping the OUTPUT here is the safe single point of truth.
+        # Ref: TRACKER_2026-07-25_UI_RESEARCH.md §4 (FIX-4a).
         if kwargs.get("body") and llm_role == "assistant":
-            kwargs["body"] = self._process_llm_body(kwargs["body"])
+            kwargs["body"] = Markup(self._process_llm_body(kwargs["body"]))
 
         # Create the message using standard mail.thread flow (without body_json)
         message = super().message_post(message_type=message_type, **kwargs)
