@@ -1,3 +1,23 @@
+18.0.1.38.0 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **Sidebar header: König Intelligence logo replaces the
+  "Conversations" text** — the expanded sidebar header now opens with a
+  brand row showing the König Intelligence wordmark
+  (``llm_thread/static/src/img/koenig_intelligence_brand.svg``, sourced from
+  ``addons_koenig/koenig_ai/koenig_intelligence_logo_large.svg``; the cropped
+  file deliberately gets its own URL so browsers don't serve a week-old
+  cached copy of the uncropped original) instead of
+  the plain "Conversations" heading. The SVG's ``viewBox`` is cropped to the
+  actual glyph bounds (x 144-1903, y 243-403 of the stock 2048x682 canvas —
+  the canvas was ~75% padding, which made an uncropped render look tiny).
+  Cropped ratio ~9.3:1: at 26px CSS height the wordmark renders ~243px wide,
+  filling the 247px content width of the 280px sidebar — the full wordmark
+  could never fit the old single row (right-side icon group + New Thread
+  button leave only ~92px). Costs one extra header row (~34px); the controls
+  row (New Thread + select/archive/expert/collapse) is unchanged.
+  ``alt="König Intelligence"`` keeps the header accessible.
+
 18.0.1.37.1 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

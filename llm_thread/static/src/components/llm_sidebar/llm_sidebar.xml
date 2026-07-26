@@ -21,10 +21,20 @@
         <div t-else="" class="d-flex flex-column flex-grow-1 min-vh-0">
             <!-- Header -->
             <div
-                class="o-llm-sidebar-header d-flex align-items-center justify-content-between border-bottom p-3"
+                class="o-llm-sidebar-header border-bottom p-3"
             >
+                <!-- Brand row: full-width logo (SVG viewBox is cropped to the
+                     glyph bounds, ~9.3:1, so the rendered wordmark fills the
+                     row instead of sitting in a sea of canvas padding). -->
+                <div class="o-llm-sidebar-brand mb-2">
+                    <img
+                        src="/llm_thread/static/src/img/koenig_intelligence_brand.svg"
+                        alt="König Intelligence"
+                        class="o-llm-sidebar-logo"
+                    />
+                </div>
+                <div class="d-flex align-items-center justify-content-between">
                 <div class="d-flex align-items-center gap-2">
-                    <h6 class="mb-0 text-muted">Conversations</h6>
                     <button
                         type="button"
                         class="btn btn-sm btn-primary"
@@ -72,6 +82,7 @@
                     >
                         <i class="oi oi-panel-right" />
                     </button>
+                </div>
                 </div>
             </div>
 

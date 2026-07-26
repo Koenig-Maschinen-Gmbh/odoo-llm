@@ -4,6 +4,19 @@
 // inside it).
 
 .o-llm-sidebar {
+  // König Intelligence brand row in the sidebar header (replaces the
+  // "Conversations" h6). The SVG's viewBox is cropped to the glyph bounds
+  // (~9.3:1 — the stock 2048x682 canvas was mostly padding, which is why an
+  // uncropped render looked tiny). At 26px height it renders ~243px wide,
+  // filling the 247px content width of the 280px sidebar. Costs one extra
+  // row (~34px) of header height in exchange for a legible wordmark.
+  .o-llm-sidebar-logo {
+    height: 26px;
+    width: auto;
+    max-width: 100%;
+    display: block;
+  }
+
   // BL-17 — date-bucket headers as visually-weighted, sticky section landmarks.
   // A thread sidebar is a navigation list: the section header must dominate the
   // items below it so the eye snaps to "you are in the Today group" when
