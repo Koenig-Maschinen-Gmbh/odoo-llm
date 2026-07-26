@@ -119,24 +119,28 @@
                 </t>
             </t>
 
-            <!-- Copy button on assistant answers (P-CHAT M1).
+            <!-- Copy affordance on assistant answers (P-CHAT M1 + UI-07).
+                 Slack/discord-style: an icon-only button pinned to the
+                 bubble's top-right corner, revealed on message hover — NOT a
+                 block row at the container edge (that ate vertical space).
                  Shown for non-step assistant messages (the final answer);
                  steps carry the drawer toggle instead. Copies the markdown
                  source when body_json carries it, else the rendered plain
-                 text. Tool/user/system messages are unaffected. -->
+                 text. Tool/user/system messages are unaffected. The icon
+                 flips to a check while the "Copied" flash is active. -->
             <t
         t-if="isLLMMessage and llmRole === 'assistant' and !isLLMStep"
       >
-                <div class="o-llm-copy-row mt-1 text-end">
-                    <button
-            type="button"
-            class="btn btn-sm btn-link p-0 text-muted text-decoration-none o-llm-copy-btn"
-            t-on-click="copyBody"
-          >
-                        <i class="fa fa-copy me-1" aria-hidden="true" />
-                        <t t-esc="copiedLabel" />
-                    </button>
-                </div>
+                <button
+          type="button"
+          class="o-llm-copy-btn btn btn-link text-muted d-print-none"
+          t-att-class="{'o-llm-copied': llmCopyState.copied}"
+          t-att-title="copiedLabel"
+          t-att-aria-label="copiedLabel"
+          t-on-click="copyBody"
+        >
+                    <i t-att-class="copiedIcon" aria-hidden="true" />
+                </button>
             </t>
         </xpath>
     </t>

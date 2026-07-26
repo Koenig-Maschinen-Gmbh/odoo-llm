@@ -6,13 +6,15 @@
     // P-UX Issue 2 — breathing room between message bubbles (inter-message
     // gap) + a little more space between the author/timestamp header and
     // the message body/bubble.
-    margin-bottom: 1rem;
+    // UI-07: tightened from 1rem — denser conversation flow.
+    margin-bottom: 0.5rem;
 
     // Header (author + timestamp, e.g. "glm-5.2 … Today at 6:28 AM") →
     // body spacing. The OCB header carries `mb-1` (0.25rem); this adds a
     // touch more so the bubble doesn't sit tight under the header line.
+    // UI-07: tightened from 0.5rem.
     .o-mail-Message-contentContainer {
-        margin-top: 0.5rem;
+        margin-top: 0.25rem;
     }
 
     // User messages — subtle blue-tinted bubble, right-leaning.
@@ -66,6 +68,44 @@
         border-radius: 12px;
         padding: 8px 14px;
         border: 1px solid rgba(220, 53, 69, 0.2);
+    }
+
+    // Copy affordance on assistant answers (P-CHAT M1 + UI-07) — an
+    // icon-only button pinned to the message row's top-right corner,
+    // revealed on message hover (slack/discord-style, mirroring OCB
+    // `o-mail-Message-actions`). Absolutely positioned → no layout cost;
+    // the old block copy row (`mt-1 text-end`) was removed in UI-07.
+    // Positioned against the message root (`.o-mail-Message.position-relative`)
+    // — NOT the content bubble, which hugs the text (flex item) and would
+    // both overlap short answers and only reveal when hovering the bubble
+    // itself. The button lives at the row corner and reveals on row hover.
+    .o-llm-copy-btn {
+        position: absolute;
+        top: 2px;
+        right: 12px;
+        z-index: 1;
+        padding: 2px 6px;
+        font-size: 0.75rem;
+        line-height: 1;
+        border-radius: 6px;
+        background-color: var(--bs-body-bg, #fff);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        opacity: 0;
+        transition: opacity 0.15s ease-in-out;
+        cursor: pointer;
+
+        &:hover, &:focus-visible {
+            opacity: 1;
+            color: #714B67;
+        }
+
+        &.o-llm-copied {
+            opacity: 1;
+            color: var(--bs-success, #198754);
+        }
+    }
+    &:hover .o-llm-copy-btn {
+        opacity: 0.6;
     }
 }
 
@@ -204,18 +244,6 @@
         a {
             color: #714B67;
             text-decoration: underline;
-        }
-
-        // Copy button on assistant answers (P-CHAT M1) — subtle, muted.
-        .o-llm-copy-row {
-            .o-llm-copy-btn {
-                font-size: 0.75rem;
-                cursor: pointer;
-
-                &:hover {
-                    color: #714B67;
-                }
-            }
         }
     }
 }

@@ -1,3 +1,24 @@
+18.0.1.37.0 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **UI-07: copy affordance on the bubble corner + tighter message
+  spacing** — the assistant answer copy control was a block row
+  (``mt-1 text-end``) at the container edge that ate vertical space. It is
+  now an icon-only button pinned to the message row's top-right corner,
+  revealed on message hover (slack/discord-style, mirroring OCB
+  ``o-mail-Message-actions``); the icon flips to a green check during the
+  "Copied" flash. Positioned against the message root, NOT the content
+  bubble — the bubble hugs the text (flex item), so a bubble-scoped hover
+  would both overlay short answers and only reveal when hovering the
+  bubble itself (verified live: contentRect 169px inside a 1256px row).
+  Message spacing tightened: inter-message bottom margin 1rem → 0.5rem,
+  header→body 0.5rem → 0.25rem.
+* [ADD] **UI-07 browser case** — ``assistant_copy_button_hover_affordance_
+  and_spacing`` in ``tools_ai/ai_browser_suite``: icon-only + hidden
+  pre-hover, absolute at the row corner, revealed on row hover, click →
+  check flash → resets after ~1.5s, 8px bottom gap. Full suite 10/10
+  green; llm_thread Python+Hoot 56/56 green on test_ai_linkify.
+
 18.0.1.36.1 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

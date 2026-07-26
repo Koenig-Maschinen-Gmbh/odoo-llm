@@ -126,6 +126,14 @@ patch(Message.prototype, {
         return this.llmCopyState.copied ? _t("Copied") : _t("Copy");
     },
 
+    /**
+     * Icon class for the corner copy affordance (UI-07) — flips to a check
+     * while the "Copied" flash is active. Read-only getter (render-safe).
+     */
+    get copiedIcon() {
+        return this.llmCopyState.copied ? "fa fa-check" : "fa fa-copy";
+    },
+
     // ------------------------------------------------------------------------
     // FIX-4d — collapsible reasoning ("Thinking") block above the answer.
     // The llm store accumulates reasoning chunks on body_json.reasoning
