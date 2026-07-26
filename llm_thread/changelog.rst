@@ -1,3 +1,19 @@
+18.0.1.36.1 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **F4: context HUD denominator resolves the assistant's model** —
+  ``get_context_stats`` computed the context window / reserved-output from
+  ``thread.model_id`` only. The assistant is the configuration source of
+  truth (the thread's model_id is merely synced from it at
+  creation/onchange and drifts when the admin reconfigures the assistant),
+  so the HUD could show the master model's window instead of the
+  assistant's configured one. Resolution order is now
+  ``assistant_id.model_id`` → ``thread.model_id`` (guarded for bare
+  llm_thread installs without llm_assistant).
+* [ADD] **F4 tests** — assistant model wins over the thread model; thread
+  model remains the fallback when no assistant is set. Full llm_thread
+  suite 56/56 green on test_ai_linkify (incl. Hoot 128).
+
 18.0.1.36.0 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

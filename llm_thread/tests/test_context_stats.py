@@ -87,6 +87,66 @@ class TestGetContextStats(TransactionCase):
         # The key invariant: the method does NOT raise.
         self.assertIsInstance(result, dict)
 
+    def test_context_window_prefers_assistant_model(self):
+        """F4 (2026-07-26): the HUD denominator resolves via the ASSISTANT's
+        configured model first — the assistant is the configuration source of
+        truth; the thread's model_id (synced from it) may drift after an
+        admin reconfiguration."""
+        ctx_window = getattr(self.model, "koenig_context_window", None)
+        if ctx_window is None:
+            self.skipTest("koenig_ai_core not installed (no koenig_context_window)")
+        if "llm.assistant" not in self.env:
+            self.skipTest("llm_assistant not installed")
+        assistant_model = (
+            self.env["llm.model"]
+            .sudo()
+            .create(
+                {
+                    "name": "test-assistant-model",
+                    "provider_id": self.provider.id,
+                    "model_use": "chat",
+                }
+            )
+        )
+        self.model.sudo().write({"koenig_context_window": 100000})
+        assistant_model.sudo().write({"koenig_context_window": 200000})
+        prompt = (
+            self.env["llm.prompt"]
+            .sudo()
+            .create({"name": "Test Prompt", "template": "You are a test assistant."})
+        )
+        assistant = (
+            self.env["llm.assistant"]
+            .sudo()
+            .create(
+                {
+                    "name": "Test Assistant",
+                    "provider_id": self.provider.id,
+                    "model_id": assistant_model.id,
+                    "prompt_id": prompt.id,
+                }
+            )
+        )
+        self.thread.sudo().write({"assistant_id": assistant.id})
+        self.thread.invalidate_recordset()
+        result = self.env["llm.thread"].get_context_stats(self.thread.id)
+        self.assertEqual(result["context_window"], 200000)
+
+    def test_context_window_falls_back_to_thread_model(self):
+        """F4: without an assistant, the thread's own model is the fallback
+        (covered by test_context_window_from_model — this pins the None-
+        assistant path explicitly)."""
+        ctx_window = getattr(self.model, "koenig_context_window", None)
+        if ctx_window is None:
+            self.skipTest("koenig_ai_core not installed (no koenig_context_window)")
+        self.model.sudo().write({"koenig_context_window": 131072})
+        self.model.invalidate_recordset(["koenig_context_window"])
+        if "assistant_id" in self.thread._fields:
+            self.thread.sudo().write({"assistant_id": False})
+            self.thread.invalidate_recordset(["assistant_id"])
+        result = self.env["llm.thread"].get_context_stats(self.thread.id)
+        self.assertEqual(result["context_window"], 131072)
+
     def test_thread_id_wrapped_in_list(self):
         """The RPC layer may wrap thread_id in a list — the method handles it."""
         result = self.env["llm.thread"].get_context_stats([self.thread.id])

@@ -1049,14 +1049,25 @@ class LLMThread(models.Model):
 
         # Context window + reserved output from the model record (added by
         # koenig_ai_core — may be absent if koenig_ai_core is not installed).
+        # F4 (2026-07-26): resolve via the ASSISTANT's configured model first
+        # — the assistant is the configuration source of truth (the thread's
+        # model_id is only synced from it at creation/onchange and can drift
+        # when the admin reconfigures the assistant). Fall back to the
+        # thread's own model when no assistant is set.
         context_window = 0
         reserved_output = 0
-        if thread.model_id:
+        # ``assistant_id`` comes from llm_assistant — guard its existence so
+        # a bare llm_thread install keeps working.
+        assistant = thread.assistant_id if "assistant_id" in thread._fields else None
+        effective_model = (
+            assistant.model_id if assistant and assistant.model_id else thread.model_id
+        )
+        if effective_model:
             context_window = getattr(
-                thread.model_id, "koenig_context_window", 0
+                effective_model, "koenig_context_window", 0
             ) or 0
             reserved_output = getattr(
-                thread.model_id, "koenig_max_output_tokens", 0
+                effective_model, "koenig_max_output_tokens", 0
             ) or 0
 
         # Last real prompt tokens from the trace model (koenig.ai.llm.trace
