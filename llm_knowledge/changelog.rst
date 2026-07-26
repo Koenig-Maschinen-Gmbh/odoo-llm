@@ -1,3 +1,19 @@
+18.0.1.4.3 (2026-07-26)
+------------------------
+
+* [KOENIG][ADD] Embedding-search failure stash (honest degradation, B1).
+  ``_generate_embeddings_for_collections`` previously swallowed provider
+  errors (``except Exception: pass``, no log) and ``chunk.search()`` then
+  silently fell back to a plain ORM scan — consumers could not distinguish
+  "no matches" from "retrieval degraded" and reported confidently wrong
+  answers ("keine Handbücher vorhanden" during an embedding outage) or even
+  cited arbitrary chunks with similarity 0. Each failed embedding model is
+  now logged (warning) and recorded in a per-thread stash; callers pop it
+  via the new ``_pop_embedding_search_errors()`` to detect full degradation.
+  Mirrors the ``_embedding_usage`` thread-local pattern in
+  ``llm/models/llm_provider.py``. New test module
+  ``tests/test_embedding_stash.py`` (full/partial failure, stale-stash reset).
+
 18.0.1.4.2 (2026-07-23)
 ------------------------
 

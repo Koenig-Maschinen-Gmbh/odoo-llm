@@ -1,9 +1,21 @@
 import logging
+import threading
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+
+# KOENIG fork: per-thread stash for embedding-generation failures during a
+# vector search. `_generate_embeddings_for_collections` previously swallowed
+# provider errors (auth outage, 5xx) and silently fell back to a plain ORM
+# search — consumers could not distinguish "no matches" from "retrieval
+# degraded" and reported confidently wrong answers. The stash records each
+# failed embedding model for the current search; callers (koenig_ai_core
+# source mixin) pop it after the search to detect full degradation.
+# Thread-local so concurrent requests don't cross-contaminate.
+_embedding_search_errors = threading.local()
 
 
 class LLMKnowledgeChunk(models.Model):
@@ -217,23 +229,60 @@ class LLMKnowledgeChunk(models.Model):
         """
         model_vector_map = {}
         embedding_models = collections.mapped("embedding_model_id")
+        # Reset the per-thread failure stash for THIS search — a caller popping
+        # it afterwards sees exactly this search's failures, never leftovers
+        # from a previous search on the same thread.
+        _embedding_search_errors.value = None
 
         if not embedding_models:
             return model_vector_map, collections
 
+        failed = []
         for model in embedding_models:
             try:
                 model_vector_map[model.id] = model.embedding(
                     vector_search_term.strip()
                 )[0]
-            except Exception:
+            except Exception as exc:
+                failed.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.name or model.model or str(model.id),
+                        "provider_id": model.provider_id.id if model.provider_id else False,
+                        "error": str(exc) or type(exc).__name__,
+                    }
+                )
+                _logger.warning(
+                    "llm_knowledge: embedding generation failed for model %s "
+                    "(provider %s) during vector search: %s",
+                    model.id,
+                    model.provider_id.id if model.provider_id else "?",
+                    exc,
+                )
                 # Remove collections using this failed model
                 collections = collections.filtered(
                     lambda c, failed_model_id=model.id: c.embedding_model_id.id
                     != failed_model_id
                 )
 
+        if failed:
+            _embedding_search_errors.value = {
+                "failed": failed,
+                "total": len(embedding_models),
+                "full_failure": len(failed) == len(embedding_models),
+            }
+
         return model_vector_map, collections
+
+    @api.model
+    def _pop_embedding_search_errors(self):
+        """Pop (read-and-clear) the embedding failures stashed by the last
+        vector search on this thread. Returns ``None`` when the last search
+        had no failures (or never ran). Consumers use this to distinguish
+        "no matches" from "retrieval degraded" — see module-level comment."""
+        value = getattr(_embedding_search_errors, "value", None)
+        _embedding_search_errors.value = None
+        return value
 
     @api.model
     def search_fetch(self, domain, field_names, offset=0, limit=None, order=None):
