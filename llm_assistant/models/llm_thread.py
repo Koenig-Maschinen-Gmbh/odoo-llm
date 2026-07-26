@@ -1663,7 +1663,10 @@ class LLMThread(models.Model):
         collected_tool_calls = []
         # TEL-01: sink init (keys only — no behavior change). t0 is the
         # monotonic clock for ttft/duration; the sink carries it for _fill_end.
+        # HARD-07: prev_chunk_mono tracks the previous chunk's monotonic time
+        # for inter-chunk gap forensics.
         t0 = time.monotonic()
+        prev_chunk_mono = None
         # PERF-09: resolve the cap once per attempt (not per chunk).
         max_stream_s = (
             max_stream_duration_s
@@ -1702,6 +1705,26 @@ class LLMThread(models.Model):
                 raise GenerationCancelled(
                     _("Generation cancelled by loop-control hook."),
                 )
+
+            # HARD-07: inter-chunk gap forensics (durations only — privacy-
+            # safe). Tracks max gap + cumulative total/count so the trace can
+            # expose avg. Metadata chunks (finish_reason/usage) count too —
+            # consistent with the ttft "any chunk" semantics below.
+            now_mono = time.monotonic()
+            if trace_sink is not None and prev_chunk_mono is not None:
+                try:
+                    gap_ms = int((now_mono - prev_chunk_mono) * 1000)
+                    if gap_ms > trace_sink.get("inter_chunk_max_ms", 0):
+                        trace_sink["inter_chunk_max_ms"] = gap_ms
+                    trace_sink["inter_chunk_gap_total_ms"] = (
+                        trace_sink.get("inter_chunk_gap_total_ms", 0) + gap_ms
+                    )
+                    trace_sink["inter_chunk_gap_count"] = (
+                        trace_sink.get("inter_chunk_gap_count", 0) + 1
+                    )
+                except Exception:  # noqa: BLE001 — telemetry must never raise
+                    _logger.debug("trace_sink inter-chunk fill failed", exc_info=True)
+            prev_chunk_mono = now_mono
 
             # PERF-09: total-duration cap. Fires regardless of cancel mode —
             # it is a safety net, not a cancel. The cancel check above keeps

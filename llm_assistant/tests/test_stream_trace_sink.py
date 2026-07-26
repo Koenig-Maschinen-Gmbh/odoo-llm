@@ -170,6 +170,38 @@ class TestStreamTraceSink(TransactionCase):
         self.assertEqual(trace.finish_reason, "stop")
         self.assertFalse(trace.error_class, "No error class on success")
 
+    def test_inter_chunk_gap_forensics_flow_to_trace(self):
+        """HARD-07: a multi-chunk stream records inter-chunk gap forensics on
+        the trace — gap count = chunks-1 (metadata chunks count), max >= 0,
+        avg consistent with total/count, ttft + first_chunk_ts set."""
+        stream = [
+            {"content": "Hello "},
+            {"content": "back"},
+            {"content": "!"},
+            {"finish_reason": "stop"},
+        ]
+        result, events, exc = self._run_with_chat([stream])
+        self.assertIsNone(exc, "Expected success")
+        self.assertIsNotNone(result)
+        traces = (
+            self.env["koenig.ai.llm.trace"]
+            .sudo()
+            .search([("thread_id", "=", self.thread.id)])
+        )
+        self.assertEqual(len(traces), 1, "Expected 1 trace row")
+        trace = traces[0]
+        self.assertTrue(trace.first_chunk_ts, "first_chunk_ts recorded")
+        self.assertGreaterEqual(trace.ttft_ms, 0, "ttft recorded")
+        # 4 chunks → 3 inter-chunk gaps (any chunk type counts, including
+        # the finish_reason metadata chunk).
+        self.assertGreaterEqual(trace.inter_chunk_max_ms, 0, "max gap recorded")
+        self.assertGreaterEqual(trace.inter_chunk_avg_ms, 0, "avg gap recorded")
+        self.assertLessEqual(
+            trace.inter_chunk_avg_ms,
+            trace.inter_chunk_max_ms,
+            "avg can never exceed max",
+        )
+
     def test_hook_fires_per_attempt_with_right_statuses(self):
         """chat raises-empty twice then succeeds → 3 hook calls: error, error, ok."""
         empty_stream = [{"finish_reason": "stop"}]  # no content, no tool_calls

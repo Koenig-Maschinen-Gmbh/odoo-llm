@@ -1,3 +1,18 @@
+18.0.1.26.0 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **HARD-07: inter-chunk gap forensics in the trace sink** — the
+  streaming loop (``_handle_streaming_response``) now tracks per-chunk
+  monotonic gaps into the trace sink (``inter_chunk_max_ms`` +
+  ``inter_chunk_gap_total_ms``/``inter_chunk_gap_count`` for the mean).
+  Durations only — privacy-safe, no content. Metadata chunks
+  (finish_reason/usage) count, consistent with the "any chunk" TTFT
+  semantics. ``koenig_ai_core`` maps these onto new trace columns; the
+  orchestrator dossier aggregates the run's worst gap.
+* [ADD] **HARD-07 test** — multi-chunk stream → gap fields flow through
+  the real pipeline into the trace row (first_chunk_ts + ttft set,
+  0 ≤ avg ≤ max). Suite 4/4 green on test_ai_linkify.
+
 18.0.1.25.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
