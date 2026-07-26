@@ -1,3 +1,26 @@
+18.0.1.35.0 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **P-F1: run-finished popup notification** — when a run finishes on
+  a thread the user is NOT currently watching, a toast pops up ("AI
+  conversation finished — AI answer ready in '<thread>'", or "...failed" in
+  danger style), like getting a new message from another user. The toast
+  carries an "Open conversation" button that opens the chat client action
+  directly on the finished thread (OCB ``doAction`` +
+  ``additionalContext.active_id`` — the same flow as the
+  ``/odoo/action-…?active_id=llm.thread_<id>`` URL). Fires exactly once per
+  run on the transition INTO ``done``/``failed`` (every delivery path —
+  orchestration bus event, SSE terminal event, 60s poll reconcile — funnels
+  through ``setThreadRunState``); a same-state poll reconcile does NOT
+  re-notify. Suppressed while the user is watching the thread (active
+  thread + tab visible). Pattern: OCB ``simple_notification`` (bus event →
+  toast), implemented client-side so no extra bus traffic is needed.
+  Ref: ``TRACKER_2026-07-26_UI_BUS_HARDENING.md`` §5.
+* [ADD] **P-F1 Hoot tests** — 7 tests covering the success/danger toast,
+  the Open-conversation button action, the watching-thread suppression,
+  the background-thread case, the no-re-notify poll reconcile, the
+  new-run re-notify, and non-terminal silence.
+
 18.0.1.34.1 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

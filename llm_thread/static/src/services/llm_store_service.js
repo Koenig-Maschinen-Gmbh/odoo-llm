@@ -10,6 +10,7 @@ import {
 import { getVisibleRunSummary } from "../utils/llm_phase";
 import { Deferred } from "@web/core/utils/concurrency";
 import { _t } from "@web/core/l10n/translation";
+import { browser } from "@web/core/browser/browser";
 import { deserializeDateTime } from "@web/core/l10n/dates";
 import { reactive } from "@odoo/owl";
 import { registry } from "@web/core/registry";
@@ -39,9 +40,9 @@ function _sameIds(a, b) {
  * Provides LLM-specific functionality without breaking mail components
  */
 export const llmStoreService = {
-    dependencies: ["orm", "mail.store", "notification", "bus_service"],
+    dependencies: ["orm", "mail.store", "notification", "bus_service", "action"],
 
-    start(env, { orm, "mail.store": mailStore, notification, bus_service }) {
+    start(env, { orm, "mail.store": mailStore, notification, bus_service, action }) {
         const llmStore = reactive({
             // NOTE: Threads are now loaded via standard mail.store, no need for separate Map
             // Map<id, LLMModel>
@@ -1285,6 +1286,75 @@ export const llmStoreService = {
                     next.finishedAt = Date.now();
                 }
                 this.threadRunState[threadId] = next;
+                // P-F1: run-finished popup — fires on the transition INTO a
+                // terminal state (bus, SSE, and poll paths all funnel here).
+                this._maybeNotifyRunFinished(threadId, prev.state, next);
+            },
+
+            /**
+             * P-F1 (TRACKER_2026-07-26_UI_BUS_HARDENING.md §5) — notify the
+             * user with a popup when a run finishes on a thread they are NOT
+             * currently watching, like getting a new message from another
+             * user (OCB ``simple_notification`` precedent: a bus event ends
+             * in a ``notification.add`` toast).
+             *
+             * Fires on the transition INTO ``done``/``failed`` from a
+             * non-terminal state — exactly once per run, on every delivery
+             * path (orchestration bus event, SSE terminal event, 60s poll
+             * reconcile). A second terminal event for the same run (e.g. the
+             * poll re-applying ``done`` after the bus already did) does NOT
+             * re-notify.
+             *
+             * Suppressed while the user is watching the thread (it is the
+             * active discuss thread AND the tab is visible) — a popup then
+             * would be noise for something they already see.
+             *
+             * The toast carries an "Open conversation" button that opens the
+             * chat client action on the finished thread (OCB ``doAction``
+             * with ``additionalContext.active_id``, the same flow as the
+             * ``/odoo/action-…?active_id=llm.thread_<id>`` URL).
+             */
+            _maybeNotifyRunFinished(threadId, prevState, next) {
+                if (!next || (next.state !== "done" && next.state !== "failed")) {
+                    return;
+                }
+                if (prevState === next.state || prevState === "done" || prevState === "failed") {
+                    return; // no transition / already notified a terminal state
+                }
+                const active = mailStore.discuss?.thread;
+                const watching =
+                    active?.model === "llm.thread" &&
+                    active.id === threadId &&
+                    (typeof browser.document === "undefined" ||
+                        browser.document.visibilityState === "visible");
+                if (watching) {
+                    return;
+                }
+                const thread = mailStore.Thread.get({ model: "llm.thread", id: threadId });
+                const threadName = thread?.name || _t("conversation");
+                const ok = next.state === "done";
+                notification.add(
+                    ok
+                        ? _t("AI answer ready in “%s”", threadName)
+                        : _t("The AI run failed in “%s”", threadName),
+                    {
+                        title: ok ? _t("AI conversation finished") : _t("AI conversation failed"),
+                        type: ok ? "success" : "danger",
+                        buttons: [
+                            {
+                                name: _t("Open conversation"),
+                                primary: true,
+                                onClick: () => {
+                                    action.doAction("llm_thread.chat_client_action", {
+                                        additionalContext: {
+                                            active_id: `llm.thread_${threadId}`,
+                                        },
+                                    });
+                                },
+                            },
+                        ],
+                    }
+                );
             },
 
             getThreadRunState(threadId) {

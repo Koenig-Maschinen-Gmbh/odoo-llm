@@ -120,6 +120,7 @@ function makeMockMailStore() {
 function startLlmStore(mailStore) {
     const subscribers = {};
     const notifications = [];
+    const actions = [];
     const bus_service = {
         subscribe: (type, cb) => {
             subscribers[type] = cb;
@@ -131,21 +132,26 @@ function startLlmStore(mailStore) {
     const notification = {
         add: (message, options) => notifications.push({ message, options }),
     };
+    const action = {
+        doAction: (tag, options) => actions.push({ tag, options }),
+    };
     const orm = { call: async () => [] };
     const llmStore = llmStoreService.start(
         {},
-        { orm, "mail.store": mailStore, notification, bus_service }
+        { orm, "mail.store": mailStore, notification, bus_service, action }
     );
-    return { llmStore, subscribers, notifications };
+    return { llmStore, subscribers, notifications, actions };
 }
 
 let mailStore = null;
 let llmStore = null;
 let subscribers = null;
+let notifications = null;
+let actions = null;
 
 beforeEach(() => {
     mailStore = makeMockMailStore();
-    ({ llmStore, subscribers } = startLlmStore(mailStore));
+    ({ llmStore, subscribers, notifications, actions } = startLlmStore(mailStore));
 });
 
 // ---------------------------------------------------------------------------
@@ -482,5 +488,90 @@ describe("FREEZE-FIX: llmThreadList pin is write-stable across calls", () => {
         const pin = llmStore._threadOrderPin;
         llmStore.llmThreadList;
         expect(llmStore._threadOrderPin).toBe(pin);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// P-F1 (TRACKER_2026-07-26_UI_BUS_HARDENING.md §5) — run-finished popup.
+// A toast ("like a new message from another user") fires on the transition
+// INTO done/failed from a non-terminal state, unless the user is watching
+// the thread. The button opens the chat client action on the thread.
+// ---------------------------------------------------------------------------
+
+describe("P-F1: run-finished popup notification", () => {
+    function addThreadWithName(id, name) {
+        const thread = mailStore._addThread(id);
+        thread.name = name;
+        return thread;
+    }
+
+    test("run_done transition shows one success popup with an Open button", () => {
+        addThreadWithName(1, "Sale Orders");
+        llmStore.setThreadRunState(1, { state: "running", label: "Working..." });
+        llmStore.setThreadRunState(1, { state: "done", label: "Done" });
+
+        expect(notifications.length).toBe(1);
+        expect(notifications[0].options.type).toBe("success");
+        expect(String(notifications[0].message).includes("Sale Orders")).toBe(true);
+        const buttons = notifications[0].options.buttons || [];
+        expect(buttons.length).toBe(1);
+        // Click the button → opens the chat client action on thread 1.
+        buttons[0].onClick();
+        expect(actions.length).toBe(1);
+        expect(actions[0].tag).toBe("llm_thread.chat_client_action");
+        expect(actions[0].options.additionalContext.active_id).toBe("llm.thread_1");
+    });
+
+    test("run_failed transition shows a danger popup", () => {
+        addThreadWithName(2, "SAP Analysis");
+        llmStore.setThreadRunState(2, { state: "running" });
+        llmStore.setThreadRunState(2, { state: "failed", error: true });
+
+        expect(notifications.length).toBe(1);
+        expect(notifications[0].options.type).toBe("danger");
+    });
+
+    test("no popup while the user is watching the thread", () => {
+        addThreadWithName(1, "Watched");
+        // Thread 1 is the active discuss thread and the tab is visible.
+        mailStore.discuss.thread = { model: "llm.thread", id: 1 };
+        llmStore.setThreadRunState(1, { state: "running" });
+        llmStore.setThreadRunState(1, { state: "done" });
+        expect(notifications.length).toBe(0);
+    });
+
+    test("popup fires when ANOTHER thread is active (user is elsewhere)", () => {
+        addThreadWithName(1, "Background thread");
+        addThreadWithName(2, "Foreground thread");
+        mailStore.discuss.thread = { model: "llm.thread", id: 2 };
+        llmStore.setThreadRunState(1, { state: "running" });
+        llmStore.setThreadRunState(1, { state: "done" });
+        expect(notifications.length).toBe(1);
+    });
+
+    test("same-state reconcile (poll) does NOT re-notify", () => {
+        addThreadWithName(1, "Polled");
+        llmStore.setThreadRunState(1, { state: "running" });
+        llmStore.setThreadRunState(1, { state: "done" });
+        llmStore.setThreadRunState(1, { state: "done" }); // poll reconcile
+        llmStore.setThreadRunState(1, { state: "done" });
+        expect(notifications.length).toBe(1);
+    });
+
+    test("a NEW run after a finished one notifies again (fresh transition)", () => {
+        addThreadWithName(1, "Re-run");
+        llmStore.setThreadRunState(1, { state: "running" });
+        llmStore.setThreadRunState(1, { state: "done" });
+        llmStore.setThreadRunState(1, { state: "running", run_id: 99 });
+        llmStore.setThreadRunState(1, { state: "done", run_id: 99 });
+        expect(notifications.length).toBe(2);
+    });
+
+    test("non-terminal transitions never notify", () => {
+        addThreadWithName(1, "Quiet");
+        llmStore.setThreadRunState(1, { state: "running" });
+        llmStore.setThreadRunState(1, { state: "paused" });
+        llmStore.setThreadRunState(1, { state: "cancelled" });
+        expect(notifications.length).toBe(0);
     });
 });
