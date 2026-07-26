@@ -1,3 +1,17 @@
+18.0.1.38.1 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [IMP] **Sidebar header layout: icons wrap next to the logo, New Thread
+  moves to the search row** — the header is now a single ``flex-wrap``
+  container: the utility icons (select / archive / expert / collapse) sit
+  right of the König Intelligence wordmark (``ms-auto``) whenever the
+  sidebar is wide enough (~360px) and wrap to a right-aligned row under it
+  at the default 280px — no JS, no media queries. The "New Thread" button
+  leaves the header and is prepended to the search input row in a compact
+  form (``.o-llm-sidebar-new-thread``, slightly smaller than a stock
+  ``btn-sm``), keeping it one click away while the brand row stays clean.
+  Verified live on intranettest.
+
 18.0.1.38.0 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

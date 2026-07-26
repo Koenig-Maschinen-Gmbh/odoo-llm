@@ -21,30 +21,21 @@
         <div t-else="" class="d-flex flex-column flex-grow-1 min-vh-0">
             <!-- Header -->
             <div
-                class="o-llm-sidebar-header border-bottom p-3"
+                class="o-llm-sidebar-header d-flex flex-wrap align-items-center gap-2 border-bottom p-3"
             >
-                <!-- Brand row: full-width logo (SVG viewBox is cropped to the
-                     glyph bounds, ~9.3:1, so the rendered wordmark fills the
-                     row instead of sitting in a sea of canvas padding). -->
-                <div class="o-llm-sidebar-brand mb-2">
+                <!-- Brand + utility icons share a flex-wrap header: the icons
+                     sit right of the logo (ms-auto) when the sidebar is wide
+                     enough and wrap to a right-aligned row under it when it
+                     is not. The logo SVG's viewBox is cropped to the glyph
+                     bounds (~9.3:1), so the wordmark renders large. -->
+                <div class="o-llm-sidebar-brand">
                     <img
                         src="/llm_thread/static/src/img/koenig_intelligence_brand.svg"
                         alt="König Intelligence"
                         class="o-llm-sidebar-logo"
                     />
                 </div>
-                <div class="d-flex align-items-center justify-content-between">
-                <div class="d-flex align-items-center gap-2">
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-primary"
-                        t-on-click="createNewThread"
-                        title="New Thread"
-                    >
-                        <i class="fa fa-plus" />
-                    </button>
-                </div>
-                <div class="d-flex align-items-center gap-1">
+                <div class="d-flex align-items-center gap-1 ms-auto">
                     <button
                         type="button"
                         class="btn btn-sm btn-link px-1 py-0"
@@ -83,11 +74,18 @@
                         <i class="oi oi-panel-right" />
                     </button>
                 </div>
-                </div>
             </div>
 
-            <!-- Search -->
-            <div class="o-llm-sidebar-search p-2 border-bottom">
+            <!-- Search + New Thread -->
+            <div class="o-llm-sidebar-search d-flex align-items-center gap-2 p-2 border-bottom">
+                <button
+                    type="button"
+                    class="btn btn-sm btn-primary o-llm-sidebar-new-thread flex-shrink-0"
+                    t-on-click="createNewThread"
+                    title="New Thread"
+                >
+                    <i class="fa fa-plus" />
+                </button>
                 <div class="input-group input-group-sm">
                     <span class="input-group-text bg-white border-end-0">
                         <i class="fa fa-search text-muted" />
