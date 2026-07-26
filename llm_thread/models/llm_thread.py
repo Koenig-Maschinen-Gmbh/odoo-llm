@@ -407,7 +407,10 @@ class LLMThread(models.Model):
             payload = {"data": Store(message).get_result(), "id": self.id}
             self._bus_send("llm.thread/new_message", payload)
         except Exception:
-            _logger.debug(
+            # V9 (2026-07-26): was _logger.debug — a broadcast failure here is
+            # SILENT data loss for the live UI (the message never reaches the
+            # store without a manual refetch) and must be visible in the log.
+            _logger.warning(
                 "Failed to broadcast llm.thread message %s via bus",
                 message.id if message else None,
                 exc_info=True,

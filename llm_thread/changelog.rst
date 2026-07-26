@@ -1,3 +1,21 @@
+18.0.1.37.1 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **V9 tripwire: silent bus-broadcast failure now logs at WARNING**
+  — the ``_notify_thread`` broadcast (``_bus_send_store`` +
+  ``llm.thread/new_message``) is wrapped in try/except as defense-in-depth
+  so a Store serialization edge can never break ``message_post``, but the
+  swallow logged at *debug* level — with ``log_level = info`` the exception
+  never reached the Odoo log (the V9 silent-failure report from the UI
+  research). Root-cause hunt on current code: direct ``_bus_send_store``
+  on real final messages (shell) and a live fired run on intranettest both
+  clean — the original exception does not reproduce since the FIX-4b/c
+  streaming-broadcast rework; the WARNING tripwire makes any recurrence
+  immediately visible with a full traceback.
+* [ADD] **V9 tests** — normal post broadcasts; post succeeds + WARNING
+  logged when the broadcast raises; streaming placeholders skip the
+  broadcast (FIX-4b pin). llm_thread 59/59 green on test_ai_linkify.
+
 18.0.1.37.0 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

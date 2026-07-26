@@ -7,4 +7,5 @@ from . import test_llm_thread_tag
 from . import test_llm_thread_search
 from . import test_message_compute_author
 from . import test_maybe_generate_name
+from . import test_notify_thread_bus
 from . import test_js
