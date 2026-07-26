@@ -43,6 +43,17 @@ export const llmStoreService = {
     dependencies: ["orm", "mail.store", "notification", "bus_service", "action"],
 
     start(env, { orm, "mail.store": mailStore, notification, bus_service, action }) {
+        // P-F1b: burst aggregation for run-finished toasts. The bus replays
+        // the last ~50s of notifications on a fresh connection (OCB
+        // `bus/models/bus.py` — `last == 0` → TIMEOUT window), and parallel
+        // runs finish within the same second — both deliver a burst of
+        // terminal transitions. Without aggregation the user gets N stacked
+        // toasts (10 observed on a fresh page after an active session).
+        // Kept OUTSIDE the reactive store — a Map/setTimeout handle must not
+        // be deep-wrapped by `reactive()`.
+        const runFinishedQueue = new Map(); // ThreadId → {ok, name}
+        let runFinishedTimer = null;
+
         const llmStore = reactive({
             // NOTE: Threads are now loaded via standard mail.store, no need for separate Map
             // Map<id, LLMModel>
@@ -1319,7 +1330,7 @@ export const llmStoreService = {
                     return;
                 }
                 if (prevState === next.state || prevState === "done" || prevState === "failed") {
-                    return; // no transition / already notified a terminal state
+                    return; // No transition / already notified a terminal state
                 }
                 const active = mailStore.discuss?.thread;
                 const watching =
@@ -1330,27 +1341,81 @@ export const llmStoreService = {
                 if (watching) {
                     return;
                 }
+                // P-F1b: queue + debounce — a burst (bus replay on a fresh
+                // connection, or several parallel runs finishing together)
+                // becomes ONE summary toast instead of N stacked ones.
                 const thread = mailStore.Thread.get({ model: "llm.thread", id: threadId });
-                const threadName = thread?.name || _t("conversation");
-                const ok = next.state === "done";
+                runFinishedQueue.set(threadId, {
+                    ok: next.state === "done",
+                    name: thread?.name || _t("conversation"),
+                });
+                if (runFinishedTimer) {
+                    return;
+                }
+                runFinishedTimer = browser.setTimeout(() => {
+                    runFinishedTimer = null;
+                    const pending = [...runFinishedQueue.entries()];
+                    runFinishedQueue.clear();
+                    this._flushRunFinishedNotifications(pending);
+                }, 1500);
+            },
+
+            /**
+             * P-F1b: emit the aggregated run-finished toast(s) after the
+             * debounce window. One finished run → the single rich toast with
+             * the thread name + Open button. Several → one summary toast
+             * ("N AI conversations finished") whose button opens the latest
+             * (failures take precedence in the summary styling).
+             */
+            _flushRunFinishedNotifications(pending) {
+                if (!pending.length) {
+                    return;
+                }
+                const openThread = (threadId) => () => {
+                    action.doAction("llm_thread.chat_client_action", {
+                        additionalContext: { active_id: `llm.thread_${threadId}` },
+                    });
+                };
+                if (pending.length === 1) {
+                    const [threadId, info] = pending[0];
+                    notification.add(
+                        info.ok
+                            ? _t("AI answer ready in “%s”", info.name)
+                            : _t("The AI run failed in “%s”", info.name),
+                        {
+                            title: info.ok
+                                ? _t("AI conversation finished")
+                                : _t("AI conversation failed"),
+                            type: info.ok ? "success" : "danger",
+                            buttons: [
+                                {
+                                    name: _t("Open conversation"),
+                                    primary: true,
+                                    onClick: openThread(threadId),
+                                },
+                            ],
+                        }
+                    );
+                    return;
+                }
+                const failures = pending.filter(([, info]) => !info.ok);
+                const [lastThreadId, lastInfo] = pending[pending.length - 1];
                 notification.add(
-                    ok
-                        ? _t("AI answer ready in “%s”", threadName)
-                        : _t("The AI run failed in “%s”", threadName),
+                    failures.length
+                        ? _t("%(done)s finished · %(failed)s failed — latest: “%(name)s”", {
+                              done: pending.length - failures.length,
+                              failed: failures.length,
+                              name: lastInfo.name,
+                          })
+                        : _t("Latest: “%s”", lastInfo.name),
                     {
-                        title: ok ? _t("AI conversation finished") : _t("AI conversation failed"),
-                        type: ok ? "success" : "danger",
+                        title: _t("%s AI conversations finished", pending.length),
+                        type: failures.length ? "warning" : "success",
                         buttons: [
                             {
-                                name: _t("Open conversation"),
+                                name: _t("Open latest conversation"),
                                 primary: true,
-                                onClick: () => {
-                                    action.doAction("llm_thread.chat_client_action", {
-                                        additionalContext: {
-                                            active_id: `llm.thread_${threadId}`,
-                                        },
-                                    });
-                                },
+                                onClick: openThread(lastThreadId),
                             },
                         ],
                     }

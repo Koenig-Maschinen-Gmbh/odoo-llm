@@ -1,3 +1,22 @@
+18.0.1.36.0 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **P-F1b: run-finished toast burst aggregated** — the OCB bus
+  replays the last ~50s of notifications on a fresh connection
+  (``bus/models/bus.py``: ``last == 0`` → TIMEOUT window), so every
+  ``run_done`` that landed shortly before a page load/F5 fired its own
+  popup — a burst of 10 stacked toasts observed on a fresh page after an
+  active session (parallel runs finishing together had the same effect).
+  Terminal transitions now queue through a 1.5s debounce: one finished run
+  → the single rich toast (thread name + Open button); several → ONE
+  summary toast ("N AI conversations finished — latest: '<thread>'",
+  warning-styled when failures are included) whose button opens the latest.
+  The queued Map/timer live outside the reactive store (reactive()
+  deep-wrapping would break them).
+* [ADD] **P-F1b Hoot test** — burst aggregation: 3 terminal transitions in
+  one tick → exactly 1 summary toast; button opens the latest thread.
+  Existing P-F1 tests updated for the debounce (``runAllTimers``).
+
 18.0.1.35.0 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

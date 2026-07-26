@@ -4,6 +4,7 @@ import { llmStoreService } from "../src/services/llm_store_service";
 import { accumulateReasoningText } from "../src/utils/llm_thread_messages";
 import { translatedTerms, translationLoaded } from "@web/core/l10n/translation";
 import { beforeEach, describe, expect, test } from "@odoo/hoot";
+import { runAllTimers } from "@odoo/hoot-dom";
 
 // Hoot does not load the translation cache — ``_t(str)`` would return a
 // LazyTranslatedString whose coercion throws "translation error" (OCB
@@ -505,10 +506,11 @@ describe("P-F1: run-finished popup notification", () => {
         return thread;
     }
 
-    test("run_done transition shows one success popup with an Open button", () => {
+    test("run_done transition shows one success popup with an Open button", async () => {
         addThreadWithName(1, "Sale Orders");
         llmStore.setThreadRunState(1, { state: "running", label: "Working..." });
         llmStore.setThreadRunState(1, { state: "done", label: "Done" });
+        await runAllTimers(); // P-F1b debounce window
 
         expect(notifications.length).toBe(1);
         expect(notifications[0].options.type).toBe("success");
@@ -522,56 +524,83 @@ describe("P-F1: run-finished popup notification", () => {
         expect(actions[0].options.additionalContext.active_id).toBe("llm.thread_1");
     });
 
-    test("run_failed transition shows a danger popup", () => {
+    test("run_failed transition shows a danger popup", async () => {
         addThreadWithName(2, "SAP Analysis");
         llmStore.setThreadRunState(2, { state: "running" });
         llmStore.setThreadRunState(2, { state: "failed", error: true });
+        await runAllTimers();
 
         expect(notifications.length).toBe(1);
         expect(notifications[0].options.type).toBe("danger");
     });
 
-    test("no popup while the user is watching the thread", () => {
+    test("no popup while the user is watching the thread", async () => {
         addThreadWithName(1, "Watched");
         // Thread 1 is the active discuss thread and the tab is visible.
         mailStore.discuss.thread = { model: "llm.thread", id: 1 };
         llmStore.setThreadRunState(1, { state: "running" });
         llmStore.setThreadRunState(1, { state: "done" });
+        await runAllTimers();
         expect(notifications.length).toBe(0);
     });
 
-    test("popup fires when ANOTHER thread is active (user is elsewhere)", () => {
+    test("popup fires when ANOTHER thread is active (user is elsewhere)", async () => {
         addThreadWithName(1, "Background thread");
         addThreadWithName(2, "Foreground thread");
         mailStore.discuss.thread = { model: "llm.thread", id: 2 };
         llmStore.setThreadRunState(1, { state: "running" });
         llmStore.setThreadRunState(1, { state: "done" });
+        await runAllTimers();
         expect(notifications.length).toBe(1);
     });
 
-    test("same-state reconcile (poll) does NOT re-notify", () => {
+    test("same-state reconcile (poll) does NOT re-notify", async () => {
         addThreadWithName(1, "Polled");
         llmStore.setThreadRunState(1, { state: "running" });
         llmStore.setThreadRunState(1, { state: "done" });
         llmStore.setThreadRunState(1, { state: "done" }); // poll reconcile
         llmStore.setThreadRunState(1, { state: "done" });
+        await runAllTimers();
         expect(notifications.length).toBe(1);
     });
 
-    test("a NEW run after a finished one notifies again (fresh transition)", () => {
+    test("a NEW run after a finished one notifies again (fresh transition)", async () => {
         addThreadWithName(1, "Re-run");
         llmStore.setThreadRunState(1, { state: "running" });
         llmStore.setThreadRunState(1, { state: "done" });
+        await runAllTimers();
         llmStore.setThreadRunState(1, { state: "running", run_id: 99 });
         llmStore.setThreadRunState(1, { state: "done", run_id: 99 });
+        await runAllTimers();
         expect(notifications.length).toBe(2);
     });
 
-    test("non-terminal transitions never notify", () => {
+    test("non-terminal transitions never notify", async () => {
         addThreadWithName(1, "Quiet");
         llmStore.setThreadRunState(1, { state: "running" });
         llmStore.setThreadRunState(1, { state: "paused" });
         llmStore.setThreadRunState(1, { state: "cancelled" });
+        await runAllTimers();
         expect(notifications.length).toBe(0);
+    });
+
+    test("P-F1b: a burst of terminal transitions becomes ONE summary toast", async () => {
+        addThreadWithName(1, "First");
+        addThreadWithName(2, "Second");
+        addThreadWithName(3, "Third");
+        // Simulate a bus-replay burst: three runs finishing in the same tick.
+        llmStore.setThreadRunState(1, { state: "done" });
+        llmStore.setThreadRunState(2, { state: "done" });
+        llmStore.setThreadRunState(3, { state: "failed" });
+        await runAllTimers();
+        expect(notifications.length).toBe(1);
+        expect(notifications[0].options.type).toBe("warning");
+        expect(String(notifications[0].options.title).includes("3")).toBe(true);
+        // The button opens the LATEST finished thread.
+        const buttons = notifications[0].options.buttons || [];
+        expect(buttons.length).toBe(1);
+        buttons[0].onClick();
+        expect(actions.length).toBe(1);
+        expect(actions[0].options.additionalContext.active_id).toBe("llm.thread_3");
     });
 });
