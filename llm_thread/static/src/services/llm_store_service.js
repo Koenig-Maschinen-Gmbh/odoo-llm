@@ -15,6 +15,26 @@ import { reactive } from "@odoo/owl";
 import { registry } from "@web/core/registry";
 
 /**
+ * Shallow-compare two id arrays (same length, same elements, same order).
+ * Used by the ``llmThreadList`` getter to avoid a reactive write when the
+ * reconciled pin is unchanged (see FREEZE-FIX below).
+ */
+function _sameIds(a, b) {
+    if (a === b) {
+        return true;
+    }
+    if (!a || !b || a.length !== b.length) {
+        return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * LLM Store Service - Integrates with existing mail.store
  * Provides LLM-specific functionality without breaking mail components
  */
@@ -113,21 +133,37 @@ export const llmStoreService = {
                 // fresh page load wipes JS state, so the pin starts null and
                 // is rebuilt here on first access.
                 const currentIds = new Set(llmThreads.map((t) => t.id));
-                if (!this._threadOrderPin) {
-                    this._threadOrderPin = sorted.map((t) => t.id);
+                let pin = this._threadOrderPin;
+                if (!pin) {
+                    pin = sorted.map((t) => t.id);
                 } else {
                     // Drop IDs no longer present; add new IDs at the front
                     // (sorted by write_date among themselves).
-                    const pinSet = new Set(this._threadOrderPin);
+                    const pinSet = new Set(pin);
                     const newThreads = sorted.filter((t) => !pinSet.has(t.id));
-                    const knownIds = this._threadOrderPin.filter((id) => currentIds.has(id));
-                    this._threadOrderPin = [...newThreads.map((t) => t.id), ...knownIds];
+                    const knownIds = pin.filter((id) => currentIds.has(id));
+                    pin = [...newThreads.map((t) => t.id), ...knownIds];
+                }
+                // FREEZE-FIX (TRACKER_2026-07-26_UI_BUS_HARDENING.md): write
+                // the pin back ONLY when its content actually changed. The
+                // previous unconditional write assigned a fresh array identity
+                // on EVERY getter call — a reactive write during render — which
+                // invalidated the observing component (the sidebar) and
+                // scheduled a re-render; the re-render called this getter
+                // again → another write → an infinite render loop that pegged
+                // the main thread (~100% CPU per renderer, surviving for
+                // hours) and froze the whole chat page (even trivial
+                // Runtime.evaluate calls starved). With the content-compare,
+                // the write (and the single extra render it schedules) happens
+                // at most once per REAL change (thread added/removed).
+                if (!_sameIds(pin, this._threadOrderPin)) {
+                    this._threadOrderPin = pin;
                 }
 
                 // Build the result in pin order (stable), looking up each
                 // thread from the store.
                 const byId = new Map(llmThreads.map((t) => [t.id, t]));
-                return this._threadOrderPin.map((id) => byId.get(id)).filter((t) => t); // Drop any stale pin entries
+                return pin.map((id) => byId.get(id)).filter((t) => t); // Drop any stale pin entries
             },
 
             // LLM-specific methods using standard fetchData approach

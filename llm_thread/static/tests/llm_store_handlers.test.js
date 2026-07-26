@@ -398,3 +398,89 @@ describe("FIX-4d: reasoning_chunk accumulation", () => {
         expect(accumulateReasoningText(undefined, undefined)).toBe("");
     });
 });
+
+// ---------------------------------------------------------------------------
+// FREEZE-FIX (TRACKER_2026-07-26_UI_BUS_HARDENING.md) — llmThreadList must
+// not rewrite the reactive ``_threadOrderPin`` on every call. The previous
+// unconditional write (fresh array identity per call) was a reactive write
+// during render → invalidated the observing sidebar → re-render → getter
+// again → write again → infinite render loop that pegged the main thread
+// (~100% CPU) and froze the whole chat page. These tests pin the stability
+// contract: the pin is only replaced when the thread MEMBERSHIP changes.
+// ---------------------------------------------------------------------------
+
+describe("FREEZE-FIX: llmThreadList pin is write-stable across calls", () => {
+    /**
+     * Register three llm threads with ascending write_dates and expose them
+     * via the ``Thread.records`` dict the getter reads.
+     */
+    function addThreadsWithDates() {
+        mailStore.Thread.records = {};
+        for (const [id, wd] of [
+            [1, "2026-07-26 10:00:00"],
+            [2, "2026-07-26 11:00:00"],
+            [3, "2026-07-26 12:00:00"],
+        ]) {
+            const thread = mailStore._addThread(id);
+            thread.write_date = wd;
+            mailStore.Thread.records[`llm.thread,${id}`] = thread;
+        }
+    }
+
+    test("initial order is write_date DESC and pin identity is stable across calls", () => {
+        addThreadsWithDates();
+        const first = llmStore.llmThreadList;
+        expect(first.map((t) => t.id)).toEqual([3, 2, 1]);
+        const pin1 = llmStore._threadOrderPin;
+        // Repeated calls (as happens on every render) must NOT replace the
+        // pin with a fresh array — identity stability is what stops the
+        // reactive render loop.
+        llmStore.llmThreadList;
+        llmStore.llmThreadList;
+        llmStore.llmThreadList;
+        expect(llmStore._threadOrderPin).toBe(pin1);
+    });
+
+    test("background write_date bump keeps position AND pin identity (FIX-1 contract)", () => {
+        addThreadsWithDates();
+        llmStore.llmThreadList;
+        const pin1 = llmStore._threadOrderPin;
+        // A running thread's write_date bumps in the background — the
+        // sidebar position must NOT reshuffle (FIX-1) and the pin must not
+        // be rewritten (FREEZE-FIX).
+        mailStore.Thread.records["llm.thread,1"].write_date = "2026-07-26 13:00:00";
+        const order = llmStore.llmThreadList.map((t) => t.id);
+        expect(order).toEqual([3, 2, 1]);
+        expect(llmStore._threadOrderPin).toBe(pin1);
+        // Repeated calls after the bump: still stable.
+        llmStore.llmThreadList;
+        expect(llmStore._threadOrderPin).toBe(pin1);
+    });
+
+    test("new thread goes on top; pin changes exactly once, then is stable again", () => {
+        addThreadsWithDates();
+        llmStore.llmThreadList;
+        const pin1 = llmStore._threadOrderPin;
+        const t4 = mailStore._addThread(4);
+        t4.write_date = "2026-07-26 12:30:00";
+        mailStore.Thread.records["llm.thread,4"] = t4;
+        const order = llmStore.llmThreadList.map((t) => t.id);
+        expect(order).toEqual([4, 3, 2, 1]);
+        const pin2 = llmStore._threadOrderPin;
+        expect(pin2 === pin1).toBe(false);
+        llmStore.llmThreadList;
+        llmStore.llmThreadList;
+        expect(llmStore._threadOrderPin).toBe(pin2);
+    });
+
+    test("removed thread is dropped from the pin; pin then stable", () => {
+        addThreadsWithDates();
+        llmStore.llmThreadList;
+        delete mailStore.Thread.records["llm.thread,2"];
+        const order = llmStore.llmThreadList.map((t) => t.id);
+        expect(order).toEqual([3, 1]);
+        const pin = llmStore._threadOrderPin;
+        llmStore.llmThreadList;
+        expect(llmStore._threadOrderPin).toBe(pin);
+    });
+});

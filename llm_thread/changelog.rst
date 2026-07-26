@@ -1,3 +1,27 @@
+18.0.1.34.1 (2026-07-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **FREEZE-FIX: chat page infinite render loop (P0 production
+  freeze)** — the ``llmThreadList`` getter reconciled the FIX-1 stable-order
+  pin (``_threadOrderPin``) by assigning a fresh array identity on EVERY
+  call. That is a reactive write during render: it invalidated the observing
+  sidebar, which re-rendered, which called the getter again → another write
+  → an infinite render loop. The main thread pegged at ~100% CPU (per
+  renderer, surviving for hours), the chat client action never finished
+  loading, and even trivial ``Runtime.evaluate`` automation calls starved —
+  reported as "the AI chat blocks Odoo from loading the page". Reproduced
+  live on intranettest (three independent browser tools froze; renderer CPU
+  time confirmed ~1 core spinning). The pin is now only written back when
+  its content actually changed (shallow id-array compare), so the write —
+  and the single extra render it schedules — happens at most once per REAL
+  thread-membership change. Order stability (FIX-1) is unchanged.
+  Ref: ``TRACKER_2026-07-26_UI_BUS_HARDENING.md``.
+* [ADD] **FREEZE-FIX Hoot regression tests** — 4 new tests in
+  ``llm_store_handlers.test.js`` pin the stability contract: pin identity is
+  stable across repeated getter calls, a background ``write_date`` bump
+  keeps position AND pin identity, a new thread goes on top with exactly one
+  pin replacement, and a removed thread is dropped (then stable again).
+
 18.0.1.34.0 (2026-07-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
