@@ -4,7 +4,7 @@ import { Chatter } from "@mail/chatter/web_portal/chatter";
 import { LLMChatContainer } from "@llm_thread/components/llm_chat_container/llm_chat_container";
 import { patch } from "@web/core/utils/patch";
 import { useService } from "@web/core/utils/hooks";
-import { onMounted, useEffect } from "@odoo/owl";
+import { onMounted, status, useEffect } from "@odoo/owl";
 
 // Register LLMChatContainer component with Chatter
 Object.assign(Chatter.components, { LLMChatContainer });
@@ -15,6 +15,10 @@ Object.assign(Chatter.components, { LLMChatContainer });
  */
 patch(Chatter.prototype, {
   setup() {
+    // Plain-field init BEFORE super.setup(): the base setup's final
+    // changeThread() call already reaches the patched changeThread →
+    // _loadLLMThreadCount, which increments this counter.
+    this._llmCountSeq = 0;
     super.setup();
     this.orm = useService("orm");
     this.notification = useService("notification");
@@ -23,7 +27,9 @@ patch(Chatter.prototype, {
     Object.assign(this.state, {
       isChattingWithLLM: false,
       llmThreadId: null,
+      llmThreadCount: 0,
     });
+    this._loadLLMThreadCount();
 
     // React to AI chat state changes - the "Odoo way" using OWL
     useEffect(
@@ -143,6 +149,42 @@ patch(Chatter.prototype, {
   },
 
   /**
+   * Keep the AI thread-count badge in sync when the record changes.
+   */
+  changeThread(threadModel, threadId) {
+    super.changeThread(...arguments);
+    this._loadLLMThreadCount(threadModel, threadId);
+  },
+
+  /**
+   * Number of AI chats on the current record, shown as a badge next to the
+   * AI button (same shape as the Wiki notebook badge). Supersession-guarded
+   * against rapid record switches (JS guide §11). Decorative: failures are
+   * swallowed and never break the chatter.
+   */
+  async _loadLLMThreadCount(threadModel, threadId) {
+    const model = threadModel || this.props.threadModel;
+    const resId = threadId || this.props.threadId;
+    const seq = ++this._llmCountSeq;
+    if (!model || !resId || !this.shouldShowAIButton) {
+      this.state.llmThreadCount = 0;
+      return;
+    }
+    try {
+      const count = await this.orm.searchCount("llm.thread", [
+        ["model", "=", model],
+        ["res_id", "=", resId],
+      ]);
+      if (status(this) === "destroyed" || seq !== this._llmCountSeq) {
+        return;
+      }
+      this.state.llmThreadCount = count || 0;
+    } catch {
+      // badge is decorative — ignore
+    }
+  },
+
+  /**
    * Toggle AI Chat mode - replaces chatter content with LLM chat
    */
   async onAIChatClick() {
@@ -179,6 +221,8 @@ patch(Chatter.prototype, {
 
           this.state.isChattingWithLLM = true;
           this.state.llmThreadId = threadId;
+          // Refresh the badge (a brand-new thread may have been created).
+          this._loadLLMThreadCount();
         }
       } catch (error) {
         console.error("Failed to start AI chat:", error);

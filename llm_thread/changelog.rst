@@ -1,3 +1,13 @@
+18.0.1.39.0 (2026-07-30)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [ADD] **AI chatter button: thread-count badge** — the chatter topbar's AI
+  button (fa-robot icon) now shows a ``<sup>`` count of the record's AI
+  chats, same shape as the Wiki notebook badge (hidden at 0). Loads on
+  mount and on record switches (supersession-guarded against rapid
+  navigation) and refreshes after a new thread is created from the button.
+  Decorative: lookup failures never break the chatter.
+
 18.0.1.38.1 (2026-07-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

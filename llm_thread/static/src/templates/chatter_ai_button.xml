@@ -42,6 +42,15 @@
           class="d-none d-sm-inline"
           t-esc="state.isChattingWithLLM ? 'Exit AI' : 'AI'"
         />
+                <!-- Thread-count badge (same shape as the Wiki notebook
+                     badge): how many AI chats exist on this record. Hidden
+                     at 0. Decorative — failures never break the chatter. -->
+                <sup
+          t-if="state.llmThreadCount"
+          class="o-llm-ThreadCount ms-1"
+          title="AI chats on this record"
+          t-esc="state.llmThreadCount"
+        />
             </button>
         </xpath>
 
