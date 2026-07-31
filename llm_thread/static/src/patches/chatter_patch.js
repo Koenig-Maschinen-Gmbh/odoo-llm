@@ -10,6 +10,22 @@ import { onMounted, status, useEffect } from "@odoo/owl";
 Object.assign(Chatter.components, { LLMChatContainer });
 
 /**
+ * AI/Wiki switcher (2026-07-30 UX round 2): only ONE panel can be open in
+ * the chatter — the AI chat OR the wiki notebook (koenig_wiki_chatter).
+ * Closing the wiki side is a single guarded state flip: a no-op when
+ * koenig_wiki_chatter is not installed (the field only exists with its
+ * patch). Kept dependency-free — no import from the wiki addon.
+ *
+ * Exported as a pure function so the switcher contract is unit-testable
+ * without mounting a full Chatter.
+ */
+export function closeChatterWikiNotebook(chatter) {
+  if ("isWikiNotebookOpen" in chatter.state && chatter.state.isWikiNotebookOpen) {
+    chatter.state.isWikiNotebookOpen = false;
+  }
+}
+
+/**
  * Patch Chatter to add AI Chat functionality
  * Adds AI button to chatter topbar and inline AI chat mode
  */
@@ -91,7 +107,9 @@ patch(Chatter.prototype, {
     // Fetch thread data
     await llmThread.fetchData(["messages"]);
 
-    // Open AI chat mode
+    // Open AI chat mode (switcher: an open wiki notebook closes — only
+    // one panel fits in the chatter)
+    closeChatterWikiNotebook(this);
     this.state.isChattingWithLLM = true;
 
     // Auto-trigger generation if requested
@@ -219,6 +237,9 @@ patch(Chatter.prototype, {
           // Fetch thread data
           await llmThread.fetchData(["messages"]);
 
+          // Switcher: an open wiki notebook closes — only one panel fits
+          // in the chatter (2026-07-30 UX round 2).
+          closeChatterWikiNotebook(this);
           this.state.isChattingWithLLM = true;
           this.state.llmThreadId = threadId;
           // Refresh the badge (a brand-new thread may have been created).

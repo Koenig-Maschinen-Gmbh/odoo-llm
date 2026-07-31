@@ -32,7 +32,7 @@ Use cases include customer support automation, data analysis, training assistanc
 Contact: support@apexive.com
     """,
     "category": "Productivity, Discuss",
-    "version": "18.0.1.39.0",
+    "version": "18.0.1.40.0",
     "depends": ["base", "mail", "web", "llm", "llm_tool"],
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -130,6 +130,9 @@ Contact: support@apexive.com
             # bus/SSE handlers (mock mailStore harness; the service itself is
             # loaded via web.assets_backend on the test page).
             "llm_thread/static/tests/llm_store_handlers.test.js",
+            # 2026-07-30 — AI/Wiki switcher: pure close-helper contract (the
+            # patch itself is loaded via web.assets_backend on the test page).
+            "llm_thread/static/tests/llm_chatter_switcher.test.js",
         ],
     },
     "images": [

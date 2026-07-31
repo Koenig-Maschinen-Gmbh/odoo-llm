@@ -1,3 +1,16 @@
+18.0.1.40.0 (2026-07-31)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [CHG] **AI/Wiki switcher in the chatter** — only one panel can be open at
+  a time: entering AI chat mode now closes an open koenig_wiki_chatter
+  notebook (guarded one-line state flip, a no-op when the wiki addon is not
+  installed — no new dependency). Applies to the topbar AI button and the
+  pending-thread deep link. Pure helper ``closeChatterWikiNotebook`` is
+  exported and Hoot-tested.
+* [CHG] **AI chatter button: pushed-down style while open** — the button
+  now carries ``o-open`` (gray inset box-shadow + 1px press offset) instead
+  of a primary fill, the same pressed language as the Wiki button.
+
 18.0.1.39.0 (2026-07-30)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

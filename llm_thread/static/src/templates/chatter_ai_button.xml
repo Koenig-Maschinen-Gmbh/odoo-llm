@@ -25,12 +25,14 @@
       expr="//span[hasclass('o-mail-Chatter-topbarGrow')]"
       position="before"
     >
-            <!-- Toggle AI Chat button -->
+            <!-- Toggle AI Chat button. While chatting the button carries
+                 ``o-open`` — a pushed-down (pressed) style instead of a
+                 primary fill (2026-07-30 UX round 2). -->
             <button
         t-if="shouldShowAIButton"
         class="o-mail-Chatter-aiChat btn text-nowrap ms-1 me-1"
         t-att-class="{
-            'btn-primary': state.isChattingWithLLM,
+            'o-open': state.isChattingWithLLM,
             'my-2': !props.compactHeight
         }"
         type="button"
