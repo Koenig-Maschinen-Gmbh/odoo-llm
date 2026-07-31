@@ -1,3 +1,17 @@
+18.0.1.40.1 (2026-07-31)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] ``TestMaybeGenerateNameEffort.setUpClass`` no longer crashes with
+  ``ValueError: Invalid field 'reasoning_effort' on model 'llm.model'`` when
+  the suite runs on a database without ``llm_openai`` (the field is a
+  provider-scoped extension defined in ``llm_openai``, not in base ``llm``,
+  and ``llm_thread`` does not depend on it). The test now mirrors the
+  production defensive access (``"reasoning_effort" in model._fields``):
+  the model is configured ``low`` when the field exists — preserving the
+  full D2 scenario on full installs — and the core assertion (the title
+  call passes ``reasoning_effort='none'`` + ``max_tokens=50``) holds either
+  way. Fixes the 1-error/58-tests failure of ``--test-tags /llm_thread``.
+
 18.0.1.40.0 (2026-07-31)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

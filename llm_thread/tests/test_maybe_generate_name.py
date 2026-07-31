@@ -31,18 +31,21 @@ class TestMaybeGenerateNameEffort(TransactionCase):
                 },
             )
         )
-        cls.model = (
-            cls.env["llm.model"]
-            .sudo()
-            .create(
-                {
-                    "name": "glm-5.2",
-                    "provider_id": cls.provider.id,
-                    "model_use": "chat",
-                    "reasoning_effort": "low",  # Model configured 'low' — call must still use 'none'
-                },
-            )
-        )
+        model_vals = {
+            "name": "glm-5.2",
+            "provider_id": cls.provider.id,
+            "model_use": "chat",
+        }
+        # ``reasoning_effort`` is defined in llm_openai (a provider-scoped
+        # extension of ``llm.model``), which is NOT in llm_thread's
+        # dependency chain — set it only when the field exists, mirroring
+        # the defensive access in openai_provider.py
+        # (``"reasoning_effort" in model._fields``). The D2 assertion
+        # (the call passes 'none' regardless of model config) holds either way.
+        if "reasoning_effort" in cls.env["llm.model"]._fields:
+            # Model configured 'low' — call must still use 'none'
+            model_vals["reasoning_effort"] = "low"
+        cls.model = cls.env["llm.model"].sudo().create(model_vals)
         cls.thread = (
             cls.env["llm.thread"]
             .sudo()
