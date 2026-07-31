@@ -374,6 +374,9 @@ class LLMProvider(models.Model):
                 **self._strip_effort_params(params)
             )
         result = self._openai_process_non_streaming_response(response)
+        # KOENIG fork: stash the token usage for opt-in callers (telemetry);
+        # None-safe — the key is absent when the provider omits usage.
+        self._stash_completion_usage(result.get("usage"))
         return result.get("content", "")
 
     def _openai_process_non_streaming_response(self, response):

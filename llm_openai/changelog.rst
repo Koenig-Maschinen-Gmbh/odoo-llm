@@ -1,3 +1,13 @@
+18.0.1.7.1 (2026-07-31)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][IMP] ``openai_simple_completion`` now stashes the response's
+  token usage via ``_stash_completion_usage(result.get("usage"))`` before
+  returning the plain content (llm 18.0.1.9.0 seam). None-safe: the key
+  is absent when the provider omits usage → callers fall back to
+  estimation. No behavior change for existing callers (the stash is only
+  read via the opt-in ``_pop_completion_usage``).
+
 18.0.1.7.0 (2026-07-23)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

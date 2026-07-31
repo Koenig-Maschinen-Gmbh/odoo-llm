@@ -1,3 +1,15 @@
+18.0.1.9.0 (2026-07-31)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][ADD] Telemetry seam for ``simple_completion``: per-thread
+  ``_completion_usage`` stash + ``_stash_completion_usage`` /
+  ``_pop_completion_usage`` on ``llm.provider`` (byte-parallel to the
+  ``_embedding_usage`` precedent). Providers that report token usage in
+  their response can stash it at the text-only return boundary so opt-in
+  callers (e.g. koenig_ai_translation) account exact tokens/cost instead
+  of estimating. No signature changes; ``simple_completion`` clears the
+  stash on entry so stale values can't leak across calls.
+
 18.0.1.8.3 (2026-07-21)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

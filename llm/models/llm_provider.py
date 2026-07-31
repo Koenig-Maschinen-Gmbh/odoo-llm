@@ -11,6 +11,11 @@ from odoo.exceptions import UserError, ValidationError
 # concurrent requests don't cross-contaminate.
 _embedding_usage = threading.local()
 
+# KOENIG fork: same stash for simple_completion() — the OpenAI-compatible
+# response already carries `usage`, but the text-only return boundary drops
+# it. Providers stash it (opt-in consumers pop it); absent → callers estimate.
+_completion_usage = threading.local()
+
 
 class LLMProvider(models.Model):
     _name = "llm.provider"
@@ -143,6 +148,9 @@ class LLMProvider(models.Model):
         Returns:
             str: The generated text (empty string on failure).
         """
+        # KOENIG fork: clear any stale usage so a provider that doesn't report
+        # it can't leak a previous call's count to the caller's accounting.
+        _completion_usage.value = None
         return self._dispatch(
             "simple_completion", prompt, system_prompt=system_prompt, model=model, **kwargs
         )
@@ -204,6 +212,22 @@ class LLMProvider(models.Model):
         report it (caller then falls back to estimation)."""
         usage = getattr(_embedding_usage, "value", None)
         _embedding_usage.value = None
+        return usage
+
+    @api.model
+    def _stash_completion_usage(self, usage):
+        """KOENIG fork: provider impls call this with the API's token usage
+        (e.g. ``{'prompt_tokens': N, 'completion_tokens': M, ...}``) so
+        opt-in callers can account simple_completion() exactly."""
+        _completion_usage.value = usage or None
+
+    @api.model
+    def _pop_completion_usage(self):
+        """KOENIG fork: return + clear the token usage recorded by the last
+        ``simple_completion()`` call on this thread, or None if the provider
+        didn't report it (caller then falls back to estimation)."""
+        usage = getattr(_completion_usage, "value", None)
+        _completion_usage.value = None
         return usage
 
     def generate(self, input_data, model=None, stream=False, **kwargs):
