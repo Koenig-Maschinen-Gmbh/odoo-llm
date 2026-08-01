@@ -1,3 +1,11 @@
+18.0.1.41.0 (2026-07-31)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [FIX] **AI chatter button label is static now** — it read "Exit AI" while
+  the AI chat was open. The label stays "AI" in both states, like the Wiki
+  button (2026-07-31 UX round 3, user feedback): the open state is
+  communicated by the pushed-down ``o-open`` style and the tooltip only.
+
 18.0.1.40.1 (2026-07-31)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

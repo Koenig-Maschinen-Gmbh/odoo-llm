@@ -27,7 +27,10 @@
     >
             <!-- Toggle AI Chat button. While chatting the button carries
                  ``o-open`` — a pushed-down (pressed) style instead of a
-                 primary fill (2026-07-30 UX round 2). -->
+                 primary fill (2026-07-30 UX round 2). The LABEL never
+                 changes (2026-07-31 UX round 3): it reads "AI" in both
+                 states, like the Wiki button — the open state is
+                 communicated by the pressed style and the tooltip only. -->
             <button
         t-if="shouldShowAIButton"
         class="o-mail-Chatter-aiChat btn text-nowrap ms-1 me-1"
@@ -40,10 +43,7 @@
         t-att-title="state.isChattingWithLLM ? 'Exit AI Chat' : 'Start AI Chat'"
       >
                 <i class="fa fa-robot me-1" role="img" aria-label="AI Chat" />
-                <span
-          class="d-none d-sm-inline"
-          t-esc="state.isChattingWithLLM ? 'Exit AI' : 'AI'"
-        />
+                <span class="d-none d-sm-inline">AI</span>
                 <!-- Thread-count badge (same shape as the Wiki notebook
                      badge): how many AI chats exist on this record. Hidden
                      at 0. Decorative — failures never break the chatter. -->
