@@ -58,7 +58,7 @@ class MCPController(http.Controller):
     """
 
     @http.route(
-        "/mcp", type="mcp_json", auth="public", methods=["POST"], csrf=False, cors="*"
+        "/mcp", type="mcp_json", auth="bearer", methods=["POST"], csrf=False, cors="*"
     )
     def mcp_endpoint(self, **params):
         """MCP endpoint for JSON-RPC methods using custom dispatcher"""
@@ -227,7 +227,7 @@ class MCPController(http.Controller):
     @http.route("/mcp/health", type="http", auth="public", methods=["GET", "POST"])
     def health_check(self):
         """Health check endpoint"""
-        config = request.env["llm.mcp.server.config"].get_active_config()
+        config = request.env["llm.mcp.server.config"].sudo().get_active_config()
         health_data = config.get_health_status_data()
 
         return http.Response(

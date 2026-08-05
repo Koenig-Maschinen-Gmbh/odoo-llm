@@ -124,8 +124,19 @@ class LLMMCPServerConfig(models.Model):
 
     @api.model
     def get_active_config(self):
-        """Get the active MCP server configuration"""
-        config = self.search([("active", "=", True)], limit=1)
+        """Get the active MCP server configuration.
+
+        Read as sudo: the MCP dispatcher's session validation calls this
+        BEFORE the controller's ``requires_bearer_auth`` decorator runs
+        (the dispatcher's ``dispatch`` peeks at the JSON for pre-validation
+        before ``super().dispatch`` invokes the authenticated endpoint).
+        At that point ``request.env`` is still the route's default
+        (``auth="public"``) user, which lacks read access to this model.
+        The actual tool execution (``execute_mcp_tool``) runs after auth
+        and respects the calling user's ACL — this sudo only covers the
+        server-config metadata read, not tool data.
+        """
+        config = self.sudo().search([("active", "=", True)], limit=1)
         if not config:
             raise ValidationError("No active MCP Server configuration found.")
         return config

@@ -13,8 +13,16 @@ class LLMTool(models.Model):
 
     @api.model
     def get_mcp_tools_list(self, params=None):
-        """Handle MCP tools/list request - return MCP ListToolsResult"""
-        active_tools = self.sudo().search([("active", "=", True)])
+        """Handle MCP tools/list request - return MCP ListToolsResult.
+
+        Search as the authenticated user (NOT sudo) so the tool list only
+        includes tools the calling user has read access to. The previous
+        ``self.sudo().search(...)`` leaked all active tool names to any
+        MCP client regardless of group membership (cosmetic name-leak,
+        not data-leak — ``execute_mcp_tool`` already respected ACL — but
+        still wrong: clients shouldn't see tools they can't invoke).
+        """
+        active_tools = self.search([("active", "=", True)])
         mcp_tools = []
 
         for tool in active_tools:
