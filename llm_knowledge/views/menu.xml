@@ -8,30 +8,33 @@
         sequence="40"
     />
 
-    <!-- Collections -->
+    <!-- Collections (manager-only: chunk content is sensitive at rest) -->
     <menuitem
         id="menu_llm_knowledge_collection"
         name="Collections"
         parent="menu_llm_knowledge_root"
         action="action_llm_knowledge_collection"
+        groups="llm.group_llm_manager"
         sequence="10"
     />
 
-    <!-- Documents -->
+    <!-- Documents (manager-only) -->
     <menuitem
         id="menu_llm_knowledge_document"
         name="Documents"
         parent="menu_llm_knowledge_root"
         action="action_llm_knowledge_document"
+        groups="llm.group_llm_manager"
         sequence="30"
     />
 
-    <!-- Knowledge Chunks -->
+    <!-- Knowledge Chunks (manager-only: raw chunk content) -->
     <menuitem
         id="menu_llm_knowledge_chunk"
         name="Knowledge Chunks"
         parent="menu_llm_knowledge_root"
         action="action_llm_knowledge_chunk"
+        groups="llm.group_llm_manager"
         sequence="40"
     />
 </odoo>

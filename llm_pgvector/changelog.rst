@@ -1,3 +1,12 @@
+18.0.1.3.0 (2026-08-31)
+------------------------
+
+* [KOENIG][SEC] Access-control hardening: removed the ``base.group_user`` read
+  ACL from ``llm.knowledge.chunk.embedding`` (the raw vector table) — it is now
+  ``llm.group_llm_manager``-only. The pgvector search itself is raw SQL below
+  the ORM and unaffected; this closes the direct ORM/RPC read of embeddings.
+  Covered by ``llm_knowledge`` ``tests/test_knowledge_acl_hardening.py``.
+
 18.0.1.2.0 (2026-07-07)
 ------------------------
 

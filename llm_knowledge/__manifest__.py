@@ -8,7 +8,7 @@
         and Chroma vector stores.
     """,
     "category": "Technical",
-    "version": "18.0.1.4.3",
+    "version": "18.0.1.5.0",
     "depends": ["llm", "llm_store"],
     "external_dependencies": {
         "python": ["requests", "markdownify", "PyMuPDF", "numpy"],

@@ -1,3 +1,17 @@
+18.0.1.1.0 (2026-08-31)
+------------------------
+
+* [KOENIG][SEC] Disabled the raw ``knowledge_retriever`` tool implementation.
+  It searched ``llm.knowledge.chunk`` unfiltered as the calling user and
+  returned chunk content WITHOUT gating each chunk through its source record's
+  ``check_access('read')`` — leaking any indexed data to any caller.
+  ``knowledge_retriever_execute`` now returns a structured error dict
+  (``{"error": True, "message": ...}``) pointing at the ACL-safe source tools
+  (wiki/attachment/chatter/code search) plus a warning log, instead of running
+  a vector search. The now-dead ``_group_chunks_by_resource`` /
+  ``_get_top_resources`` / ``_process_search_results`` helpers were removed.
+  New test module ``tests/test_knowledge_retriever_disabled.py``.
+
 18.0.1.0.1 (2025-10-23)
 ------------------------
 

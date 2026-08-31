@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from odoo import api, models
+from odoo import _, api, models
 
 _logger = logging.getLogger(__name__)
 
@@ -61,6 +61,14 @@ class LLMToolKnowledgeRetriever(models.Model):
         """
         Retrieve relevant knowledge from the resource database using semantic search.
 
+        .. warning::
+            DISABLED at König: this implementation searches ``llm.knowledge.chunk``
+            unfiltered as the calling user and returns content WITHOUT checking
+            whether the user may read the *source record* each chunk came from.
+            It leaks any indexed data to any caller. It returns a structured error
+            (not an exception) so the tool-calling model can relay the reason to
+            the user instead of producing exception noise.
+
         Use this tool when you need to:
         - Answer questions that require specific information from the knowledge base
         - Find relevant resources or content based on semantic similarity
@@ -75,108 +83,17 @@ class LLMToolKnowledgeRetriever(models.Model):
             top_n: Maximum number of distinct resources to retrieve results from. Increase this value to get information from more diverse sources.
             similarity_cutoff: Minimum semantic similarity threshold (0.0-1.0) for including results. Higher values (e.g., 0.7) return only highly relevant results.
         """
-        _logger.info(
-            f"Executing Knowledge Retriever with: query={query}, collection_id={collection_id}, top_k={top_k}, top_n={top_n}, similarity_cutoff={similarity_cutoff}"
+        _logger.warning(
+            "knowledge_retriever invoked but is disabled (bypasses Odoo record "
+            "access control); query=%r collection_id=%s",
+            query,
+            collection_id,
         )
-        collection = None
-        if collection_id:
-            collection = self.env["llm.knowledge.collection"].browse(collection_id)
-
-        if not collection:
-            raise ValueError("Collection not found")
-
-        search_limit = top_n * top_k * 2
-
-        chunk_model = self.env["llm.knowledge.chunk"]
-        chunks = chunk_model.search(
-            args=[("embedding", "=", query)],
-            limit=search_limit,
-            collection_id=collection.id,
-            query_min_similarity=similarity_cutoff,
-        )
-
-        result_data = self._process_search_results(
-            chunks=chunks,
-            top_k=top_k,
-            top_n=top_n,
-        )
-
         return {
-            "query": query,
-            "collection": collection.name,
-            "collection_id": collection.id,
-            "results": result_data,
-            "total_chunks": len(result_data),
-            "embedding_model": collection.embedding_model_id.name
-            if collection.embedding_model_id
-            else "Unknown",
+            "error": True,
+            "message": _(
+                "knowledge_retriever is disabled on this system: it bypasses "
+                "Odoo record access control. Use the ACL-safe source tools "
+                "(wiki / attachment / chatter / code search) instead."
+            ),
         }
-
-    def _group_chunks_by_resource(self, chunks):
-        """Group chunks by their parent resource."""
-        chunks_by_doc = {}
-        for chunk in chunks:
-            doc_id = chunk.resource_id.id
-            if doc_id not in chunks_by_doc:
-                chunks_by_doc[doc_id] = []
-            chunks_by_doc[doc_id].append(chunk)
-
-        return chunks_by_doc
-
-    def _get_top_resources(self, chunks_by_doc, top_n):
-        """Get the top N resources based on their highest similarity chunk."""
-        # Get max similarity for each resource
-        resource_max_similarity = {}
-        for resource_id, resource_chunks in chunks_by_doc.items():
-            max_similarity = max(chunk.similarity for chunk in resource_chunks)
-            resource_max_similarity[resource_id] = max_similarity
-
-        # Sort resources by max similarity
-        return sorted(
-            resource_max_similarity.keys(),
-            key=lambda resource_id: resource_max_similarity[resource_id],
-            reverse=True,
-        )[:top_n]
-
-    def _process_search_results(self, chunks, top_k, top_n):
-        """Process search results to get the top chunks per resource.
-
-        Args:
-            chunks: Recordset of resource chunks with similarity scores in context
-            top_k: Number of chunks to retrieve per resource
-            top_n: Total number of resources to retrieve
-
-        Returns:
-            List of dictionaries with chunk data
-        """
-        # Group chunks by resource
-        chunks_by_doc = self._group_chunks_by_resource(chunks)
-
-        # Sort chunks within each resource by similarity
-        for resource_id in chunks_by_doc:
-            chunks_by_doc[resource_id].sort(
-                key=lambda chunk: chunk.similarity, reverse=True
-            )
-            # Limit to top_k chunks per resource
-            chunks_by_doc[resource_id] = chunks_by_doc[resource_id][:top_k]
-
-        # Get top_n resources based on their highest similarity chunk
-        top_resources = self._get_top_resources(chunks_by_doc, top_n)
-
-        # Collect selected chunks from top resources
-        result_data = []
-        for resource_id in top_resources:
-            for chunk in chunks_by_doc[resource_id]:
-                result_data.append(
-                    {
-                        "content": chunk.content,
-                        "resource_name": chunk.resource_id.name,
-                        "resource_id": chunk.resource_id.id,
-                        "chunk_id": chunk.id,
-                        "chunk_name": chunk.name,
-                        "similarity": round(chunk.similarity, 4),
-                        "similarity_percentage": f"{int(chunk.similarity * 100)}%",
-                    }
-                )
-
-        return result_data

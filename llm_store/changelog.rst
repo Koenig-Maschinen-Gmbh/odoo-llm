@@ -1,3 +1,11 @@
+18.0.1.1.0 (2026-08-31)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* [KOENIG][SEC] Access-control hardening: removed the ``base.group_user`` read
+  ACL from ``llm.store`` — now ``llm.group_llm_manager``-only. Store config was
+  only needed by the (now disabled) raw ``knowledge_retriever`` tool; regular
+  users reach retrieval through the sudo'd König source-mixin choke-point.
+
 18.0.1.0.1 (2026-07-16)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

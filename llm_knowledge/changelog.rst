@@ -1,3 +1,20 @@
+18.0.1.5.0 (2026-08-31)
+------------------------
+
+* [KOENIG][SEC] Access-control hardening: removed the ``base.group_user`` read
+  ACL from ``llm.knowledge.chunk``, ``llm.knowledge.collection``,
+  ``llm.knowledge.domain`` and ``llm.resource`` — these tables hold derived
+  copies of potentially sensitive source records (wiki/attachments/chatter/
+  code) and were previously dumpable by ANY internal user via RPC/UI,
+  bypassing the per-source-record ``check_access('read')`` gate enforced at
+  the König retrieval choke-point (``koenig_ai_core`` source mixin). All four
+  are now ``llm.group_llm_manager``-only; content reaches regular users
+  exclusively through the sudo'd choke-point which applies the live per-record
+  check. The three Knowledge Base menus (Collections / Documents / Knowledge
+  Chunks) are now manager-restricted too. New test module
+  ``tests/test_knowledge_acl_hardening.py`` (regular-user AccessError on
+  read/create, manager read, embedding-table manager-only).
+
 18.0.1.4.3 (2026-07-26)
 ------------------------
 
